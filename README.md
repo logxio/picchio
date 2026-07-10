@@ -1,80 +1,18 @@
 # picchio
 
+[![selftest](https://github.com/snxoi/picchio/actions/workflows/selftest.yml/badge.svg)](https://github.com/snxoi/picchio/actions/workflows/selftest.yml)
+
 Picchio is Italian for woodpecker. Woodpeckers find hollow wood by knocking
 on it and listening. This is a single Python file that knocks on your local
 LLM setup and listens for the two most common hollow spots: tok/s numbers
 that do not mean what you think they mean, and a GPU that quietly did
 nothing while the CPU did all the work.
 
-```
-python3 picchio.py /path/to/model.gguf     # llama.cpp, full diagnosis
-python3 picchio.py qwen3.5:9b              # ollama tag, measurement mode
-```
-
-No pip, no dependencies, no config. One Python file, 865 lines, stdlib
-only. If you have python3 plus either llama.cpp or ollama, you already
-have everything it needs. It runs your model three times with a fixed
-prompt (the first pass cold, the rest warm), reads the engine's own
-numbers, and prints a verdict block sized to fit in a forum comment.
-
-Cost of a run: three passes, about a minute on this machine with the
-GPU engaged, a few minutes on CPU. Read heavy; it reads your model file,
-writes one small cache file under `~/.cache/picchio`, modifies nothing,
-and leaves no process running afterwards.
-
-When to rerun it: after a llama.cpp or ollama upgrade, after an OS
-update, after switching quants of the same model, after touching -ngl
-or context size, and once before you post a tok/s number anywhere.
-
-The parser is pinned by the raw logs in this repo. Running
-`python3 picchio.py --selftest` replays the unedited engine output in
-[examples/raw/](examples/raw/) and has to reproduce every committed
-verdict block line for line; right now that is 9 pass fixtures and 3
-blocks.
-
-Three findings from this one machine set the tone. The GPU bought 22x
-on prefill but only 2x on decode, so the number everyone posts is
-blind to the bottleneck. A 36 tok/s reading I trusted reproduced in
-zero of 32 matrix cells. A background download cut decode nearly in
-half, which is why you benchmark on an idle machine.
-
-## Why I wrote this
-
-I had been systematically measuring local models for an app I am
-building, weeks of it, when I nearly filed a bug against my own code.
-Bare llama.cpp gave me 36 tok/s. The same model through the app gave
-11.5. Same machine, same day, and 3x is the kind of number you
-reorganize a week around.
-
-Before writing the fix I reran both sides properly: same binary, same
-parameters, a 32 cell matrix across CPU and GPU, cold and warm. The 36
-never reproduced. Not in one cell. The slowdown I was about to hunt did
-not exist. The number I had trusted was a rate from a different lane,
-most likely prefill or a wall clock reading from some other run,
-remembered as if it were generation speed. I never wrote down which
-lane it came from, so it got to mean whatever my theory needed it to
-mean.
-
-What the matrix did surface was a real problem somewhere else entirely.
-On some runs the engine put every layer on the CPU without saying
-anything at the level you normally look at. Generation speed barely
-moved, which is what makes this failure mode invisible. Time to first
-token on a long prompt is what explodes: about 5 seconds on the GPU
-became about 50 on the CPU for a 2.5k token prompt, on the same
-machine.
-
-So there was no 3x slowdown, there was a silent GPU problem, and my
-own note was the bug that hid one behind the other. Two measurement
-lessons, both invisible in a single tok/s number. picchio is that week
-of debugging folded into one file you can run in a minute.
-
-## What it prints
-
 Real output from the machine this was built on, unedited
-([examples/healthy-metal.txt](examples/healthy-metal.txt)). The block is
-15 lines and 66 columns on purpose, so it survives being pasted into a
-comment thread as is: the cold pass first, then the median and spread
-of the warm passes.
+([examples/healthy-metal.txt](examples/healthy-metal.txt)). The block
+is 15 lines and 66 columns on purpose, so it survives being pasted
+into a comment thread as is: the cold pass first, then the median and
+spread of the warm passes.
 
 ```
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
@@ -93,6 +31,44 @@ VERDICT: HEALTHY. The GPU did the work. Quote the warm median
   writing.
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1
 ```
+
+## Get it running
+
+```
+curl -LO https://raw.githubusercontent.com/snxoi/picchio/main/picchio.py
+python3 picchio.py /path/to/model.gguf     # llama.cpp, full diagnosis
+python3 picchio.py qwen3.5:9b              # ollama tag, measurement mode
+```
+
+No pip, no dependencies, no config. One Python file, 904 lines,
+stdlib only. If
+you have python3 plus either llama.cpp or ollama, you already have
+everything it needs. It runs your model three times with a fixed
+prompt (the first pass cold, the rest warm), reads the engine's own
+numbers, and prints the verdict block above.
+
+Cost of a run: three passes, about a minute on this machine with the
+GPU engaged, a few minutes on CPU. Read heavy; it reads your model file,
+writes one small cache file under `~/.cache/picchio`, modifies nothing,
+and leaves no process running afterwards.
+
+When to rerun it: after a llama.cpp or ollama upgrade, after an OS
+update, after switching quants of the same model, after touching -ngl
+or context size, and once before you post a tok/s number anywhere.
+
+The parser is pinned by the raw logs in this repo. Running
+`python3 picchio.py --selftest` replays the unedited engine output in
+[examples/raw/](examples/raw/) and has to reproduce every committed
+verdict block line for line; right now that is 9 pass fixtures and 3
+blocks, and the badge above runs exactly that on every push.
+
+## Three findings set the tone
+
+The GPU bought 22x on prefill but only 2x on decode, so the number
+everyone posts is blind to the bottleneck. A 36 tok/s reading I
+trusted reproduced in zero of 32 matrix cells. A background download
+cut decode nearly in half, which is why you benchmark on an idle
+machine. Everything below unpacks these three.
 
 ## The three numbers
 
@@ -181,8 +157,9 @@ YOUR NUMBER: 36.0 tok/s -> MATCHES NOTHING MEASURED HERE
 (rates: Qwen3.5-9B-Q4_K_M.gguf, Apple M5, 32 GB, 2026-07-11)
 ```
 
-That 36 is the exact number from the story above, asked against the
-machine it supposedly came from. This short check is its own output,
+That 36 is the exact number this repo exists because of (the story
+is in "Why I wrote this" below), asked against the machine it
+supposedly came from. This short check is its own output,
 deliberately not a verdict block: picchio caches the rates from your
 last diagnostic run, so the check needs no rerun. Pass `--explain`
 together with a model path instead and the same section is appended
@@ -228,6 +205,56 @@ against the measured rates: when ollama claims full GPU placement but
 the prefill to decode ratio looks CPU shaped, the verdict downgrades
 to CONFLICTING EVIDENCE instead of HEALTHY.
 These two modes are the whole scope; picchio stays one readable file.
+
+## Options
+
+```
+picchio MODEL [flags] [-- engine args]
+
+MODEL            a .gguf path (llama.cpp) or an ollama model tag
+--passes N       measurement passes, first one cold (default 3)
+--explain TOKS   classify a number you saw against the measured lanes
+--keep-logs DIR  save each pass's raw engine output into DIR
+--json           machine readable measurements after the block
+--bin PATH       choose the llama.cpp binary yourself
+--selftest       replay examples/raw, verify committed verdicts reproduce
+--version        print version and measurement protocol
+```
+
+Anything after a bare `--` goes straight to the llama.cpp binary.
+Color appears only on a terminal (`NO_COLOR` is respected); piped
+output is always plain ASCII, so a pasted block is byte for byte what
+the selftest verifies.
+
+## Why I wrote this
+
+I had been systematically measuring local models for an app I am
+building, weeks of it, when I nearly filed a bug against my own code.
+Bare llama.cpp gave me 36 tok/s. The same model through the app gave
+11.5. Same machine, same day, and 3x is the kind of number you
+reorganize a week around.
+
+Before writing the fix I reran both sides properly: same binary, same
+parameters, a 32 cell matrix across CPU and GPU, cold and warm. The 36
+never reproduced. Not in one cell. The slowdown I was about to hunt did
+not exist. The number I had trusted was a rate from a different lane,
+most likely prefill or a wall clock reading from some other run,
+remembered as if it were generation speed. I never wrote down which
+lane it came from, so it got to mean whatever my theory needed it to
+mean.
+
+What the matrix did surface was a real problem somewhere else entirely.
+On some runs the engine put every layer on the CPU without saying
+anything at the level you normally look at. Generation speed barely
+moved, which is what makes this failure mode invisible. Time to first
+token on a long prompt is what explodes: about 5 seconds on the GPU
+became about 50 on the CPU for a 2.5k token prompt, on the same
+machine.
+
+So there was no 3x slowdown, there was a silent GPU problem, and my
+own note was the bug that hid one behind the other. Two measurement
+lessons, both invisible in a single tok/s number. picchio is that week
+of debugging folded into one file you can run in a minute.
 
 ## Is this not just llama-bench?
 

@@ -21,7 +21,7 @@
 # Nothing else. No pip.
 #
 # Exit codes: 0 ok/healthy, 2 could not run, 3 partial offload,
-#             4 silent cpu fallback.
+#             4 silent cpu fallback, 5 conflicting evidence.
 
 import argparse
 import json
@@ -381,6 +381,16 @@ def diagnose(p1, p2, mode):
                 "on CPU, usually a memory fit call. Expect rates below a "
                 "fully offloaded model.".format(frac * 100)
             )
+        # ollama's reported split has been known to disagree with where
+        # the kernels actually ran, so a full-GPU claim is cross checked
+        # against the speed signature before it earns HEALTHY.
+        if prefill and decode and prefill < 5 * decode:
+            return "CONFLICTING EVIDENCE", (
+                "Ollama says 100% GPU, but prefill at {:.0f} tok/s is "
+                "only {:.1f}x decode, a CPU shaped ratio. When the split "
+                "and the rates disagree, believe neither: check the "
+                "ollama server log.".format(prefill, prefill / decode)
+            )
         para = ("Ollama reports 100% of weights in GPU memory. Quote "
                 "decode ({:.1f} tok/s) when you compare setups.".format(
                     decode) if decode else
@@ -701,7 +711,8 @@ def main():
                          indent=1))
 
     codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
-             "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4}
+             "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,
+             "CONFLICTING EVIDENCE": 5}
     sys.exit(codes.get(state, 0))
 
 

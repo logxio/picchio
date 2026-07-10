@@ -208,7 +208,11 @@ Be aware of what this mode cannot see, because ollama does not expose
 it: per layer placement, device init logs, and thread configuration.
 That is why llama.cpp mode is the full diagnosis and ollama mode is
 measurement plus a placement check. If ollama gives no memory split at
-all, picchio reports the placement as unknown instead of guessing.
+all, picchio reports the placement as unknown instead of guessing. And
+because a reported split can itself be wrong, picchio cross checks it
+against the measured rates: when ollama claims full GPU placement but
+the prefill to decode ratio looks CPU shaped, the verdict downgrades
+to CONFLICTING EVIDENCE instead of HEALTHY.
 These two modes are the whole scope; picchio stays one readable file.
 
 ## Is this not just llama-bench?
@@ -306,7 +310,7 @@ true cold start if the model was not recently loaded; when the load
 times give that away, the block says weights cached.
 
 Exit codes, for scripting: 0 healthy or no evidence, 2 could not run,
-3 partial offload, 4 silent CPU fallback.
+3 partial offload, 4 silent CPU fallback, 5 conflicting evidence.
 
 ## License
 

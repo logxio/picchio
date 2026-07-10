@@ -27,10 +27,11 @@ or context size, and once before you post a tok/s number anywhere.
 
 ## Why I wrote this
 
-While testing local models for an app I am building, I nearly filed a
-bug against my own code. Bare llama.cpp gave me 36 tok/s. The same
-model through the app gave 11.5. Same machine, same day, and 3x is the
-kind of number you reorganize a week around.
+I had been systematically measuring local models for an app I am
+building, weeks of it, when I nearly filed a bug against my own code.
+Bare llama.cpp gave me 36 tok/s. The same model through the app gave
+11.5. Same machine, same day, and 3x is the kind of number you
+reorganize a week around.
 
 Before writing the fix I reran both sides properly: same binary, same
 parameters, a 32 cell matrix across CPU and GPU, cold and warm. The 36

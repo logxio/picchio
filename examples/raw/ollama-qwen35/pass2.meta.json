@@ -1,0 +1,24 @@
+{
+ "wall_s": 7.345407999993768,
+ "engine": "ollama 0.31.1",
+ "model_name": "qwen3.5:9b",
+ "ps": {
+  "name": "qwen3.5:9b",
+  "model": "qwen3.5:9b",
+  "size": 5961437675,
+  "digest": "a003d526711678eed853441f51acce5fbd312960221a7eb9536a1fe1002e3c18",
+  "details": {
+   "parent_model": "",
+   "format": "gguf",
+   "family": "qwen35",
+   "families": [
+    "qwen35"
+   ],
+   "parameter_size": "9.0B",
+   "quantization_level": "Q4_K_M"
+  },
+  "expires_at": "2026-07-11T05:47:44.986019+09:00",
+  "size_vram": 5961437675,
+  "context_length": 4096
+ }
+}

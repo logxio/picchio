@@ -2,11 +2,13 @@
 # picchio: knocks on your local LLM setup and listens for hollow spots.
 #
 # What it does, in one run:
-#   1. runs the same fixed prompt through your model twice (cold-ish, warm)
+#   1. runs the same fixed prompt through your model N times (default 3;
+#      the first pass is the cold one, the rest are warm)
 #   2. reads the engine's own timing and placement evidence
-#   3. reports prefill, decode and wallclock tok/s as three separate numbers
+#   3. reports prefill, decode and wallclock tok/s as three separate lanes,
+#      cold pass first, then the warm median and the warm spread
 #   4. tells you whether the GPU actually did the work, or quietly did not
-#   5. shows where the seconds of the first pass went (load, prefill, decode)
+#   5. shows where the seconds of the cold pass went (load, prefill, decode)
 #   6. prints a verdict block sized to fit in a forum comment
 #
 # Usage:
@@ -14,6 +16,7 @@
 #   python3 picchio.py qwen3.5:9b                     ollama tag, measurement
 #   python3 picchio.py model.gguf --explain 36        classify a number you saw
 #   python3 picchio.py --explain 36                   same, against last run
+#   python3 picchio.py --selftest                     replay examples/raw
 #   python3 picchio.py model.gguf -- --device none -ngl 0
 #                                       (args after -- go to the engine)
 #
@@ -29,6 +32,7 @@ import os
 import platform
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import textwrap
@@ -37,17 +41,23 @@ import urllib.error
 import urllib.request
 
 VERSION = "0.1.0"
+# Measurement protocol tag, printed in the block footer. If the prompt
+# size, generation length, pass structure or aggregation ever change,
+# this bumps, so numbers from different protocols never get compared as
+# if they were one series.
+PROTOCOL = "mp1"
 WIDTH = 66
 N_PREDICT = 128
 CTX = 4096
 CACHE_PATH = os.path.expanduser("~/.cache/picchio/last.json")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "127.0.0.1:11434")
 
-# A fixed prompt of roughly 700 tokens. Prefill throughput measured on a
-# handful of tokens is dominated by per-call overhead and swings wildly;
-# it only settles into a meaningful rate with a few hundred tokens of
-# context. The text itself does not matter, only its length and that it
-# is identical on every machine.
+# A fixed prompt of roughly 730 tokens. Short prompts lie: 7 prompt
+# tokens measured 36 tok/s of apparent prefill on the same setup where
+# 730 tokens measured about 590, because per call overhead dominates
+# below a few hundred tokens. 128 generated tokens because decode
+# settles within the first few dozen and 128 gives the median room
+# without stretching the run.
 _PARA = (
     "A benchmark number without its measurement conditions is a rumor "
     "with digits in it. Tokens per second can describe how fast a model "
@@ -129,6 +139,17 @@ def finish_rates(d):
     return d
 
 
+def keep_log(path, text):
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+    except OSError as e:
+        sys.stderr.write("picchio: could not write {}: {}\n".format(path, e))
+
+
 # ------------------------------------------------------- engine: llama.cpp
 
 def find_binary(explicit):
@@ -154,17 +175,6 @@ def engine_version(binpath):
     if m:
         return "b" + m.group(1)
     return os.path.basename(binpath)
-
-
-def keep_log(path, text):
-    if not path:
-        return
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(text)
-    except OSError as e:
-        sys.stderr.write("picchio: could not write {}: {}\n".format(path, e))
 
 
 def run_llama_pass(binpath, model, extra_args, log_path=None):
@@ -261,6 +271,9 @@ def parse_stderr(text, wall_s):
         if "system_info" in line:
             m = re_threads.search(line)
             if m:
+                # llama.cpp defaults to 4 threads on this 10 core test
+                # machine; recorded rather than tuned, because CPU rates
+                # move a lot with -t and the block should say so.
                 d["threads"] = int(m.group(1))
                 d["cores"] = int(m.group(2))
     return finish_rates(d)
@@ -303,16 +316,7 @@ def ollama_ps_entry(tag):
     return None
 
 
-def run_ollama_pass(tag, log_path=None):
-    t0 = time.monotonic()
-    resp = ollama_api("/api/generate", {
-        "model": tag,
-        "prompt": BENCH_PROMPT,
-        "stream": False,
-        "options": {"num_predict": N_PREDICT, "num_ctx": CTX, "seed": 7},
-    })
-    wall_s = time.monotonic() - t0
-    keep_log(log_path, json.dumps(resp, indent=1))
+def map_ollama(resp, wall_s, ps):
     d = blank_pass()
     d["wall_s"] = wall_s
     ns = 1e6  # ns -> ms
@@ -324,7 +328,6 @@ def run_ollama_pass(tag, log_path=None):
     if resp.get("eval_duration") and resp.get("eval_count"):
         d["eval_ms"] = resp["eval_duration"] / ns
         d["eval_tokens"] = resp["eval_count"]
-    ps = ollama_ps_entry(tag)
     if ps:
         size, vram = ps.get("size"), ps.get("size_vram")
         if size:
@@ -338,7 +341,24 @@ def run_ollama_pass(tag, log_path=None):
     return finish_rates(d)
 
 
+def run_ollama_pass(tag, log_path=None):
+    t0 = time.monotonic()
+    resp = ollama_api("/api/generate", {
+        "model": tag,
+        "prompt": BENCH_PROMPT,
+        "stream": False,
+        "options": {"num_predict": N_PREDICT, "num_ctx": CTX, "seed": 7},
+    })
+    wall_s = time.monotonic() - t0
+    keep_log(log_path, json.dumps(resp, indent=1))
+    ps = ollama_ps_entry(tag)
+    return map_ollama(resp, wall_s, ps), ps
+
+
 def ollama_unload(tag):
+    # Unload first so the cold pass pays the true load cost; ollama
+    # keeps models resident for 5 minutes by default, and a cold number
+    # measured against a resident model means nothing.
     try:
         ollama_api("/api/generate", {"model": tag, "keep_alive": 0},
                    timeout=60)
@@ -346,20 +366,36 @@ def ollama_unload(tag):
         pass
 
 
+# ------------------------------------------------------------- aggregation
+
+def warm_stats(passes, key):
+    vals = [p[key] for p in passes[1:] if p.get(key)]
+    if not vals:
+        return None, None, None
+    return statistics.median(vals), min(vals), max(vals)
+
+
+def build_rep(passes):
+    """Evidence from the last pass, rates replaced by warm medians."""
+    rep = dict(passes[-1])
+    for key in ("prefill_toks", "decode_toks", "wallclock_toks"):
+        med, _, _ = warm_stats(passes, key)
+        rep[key] = med or rep.get(key)
+    return rep
+
+
 # --------------------------------------------------------------- diagnosis
 
-def diagnose(p1, p2, mode):
-    """Returns (state, paragraph). State drives the exit code.
-    Paragraphs are kept short: the whole block must fit in 15 lines."""
-    decode = p2["decode_toks"] or p1["decode_toks"]
-    prefill = p2["prefill_toks"] or p1["prefill_toks"]
-    wait = ""
-    if prefill:
-        wait = " a 2500 token prompt {:.0f} s from its first word".format(
-            2500.0 / prefill)
+def diagnose(cold, rep, mode):
+    """Returns (state, paragraph). State drives the exit code. The
+    paragraph budget is about 160 characters: the whole block must stay
+    inside 15 lines."""
+    decode = rep["decode_toks"] or cold["decode_toks"]
+    prefill = rep["prefill_toks"] or cold["prefill_toks"]
+    wait_s = 2500.0 / prefill if prefill else None
 
     if mode == "ollama":
-        frac = p2["vram_frac"]
+        frac = rep["vram_frac"]
         if frac is None:
             return "NO PLACEMENT EVIDENCE", (
                 "Ollama did not report a memory split for this model, so "
@@ -367,13 +403,13 @@ def diagnose(p1, p2, mode):
                 "placement is not."
             )
         if frac < 0.05:
-            para = ("Ollama reports 0% of weights in GPU memory. Decode "
-                    "({:.1f} tok/s) may look passable, which is how this "
-                    "hides.".format(decode) if decode else
-                    "Ollama reports 0% of weights in GPU memory.")
+            para = "Ollama reports 0% of weights in GPU memory."
+            if decode:
+                para += (" Decode ({:.1f} tok/s) may look passable, which "
+                         "is how this hides.".format(decode))
             if prefill:
-                para += (" Prefill at {:.0f} tok/s puts{}.".format(
-                    prefill, wait))
+                para += (" Prefill at {:.0f} tok/s parks a 2500 token "
+                         "prompt {:.0f} s out.".format(prefill, wait_s))
             return "SILENT CPU FALLBACK", para
         if frac < 0.95:
             return "PARTIAL OFFLOAD", (
@@ -387,20 +423,20 @@ def diagnose(p1, p2, mode):
         if prefill and decode and prefill < 5 * decode:
             return "CONFLICTING EVIDENCE", (
                 "Ollama says 100% GPU, but prefill at {:.0f} tok/s is "
-                "only {:.1f}x decode, a CPU shaped ratio. When the split "
-                "and the rates disagree, believe neither: check the "
-                "ollama server log.".format(prefill, prefill / decode)
+                "only {:.1f}x decode, a CPU shaped ratio. Believe neither "
+                "signal: check the ollama server log.".format(
+                    prefill, prefill / decode)
             )
-        para = ("Ollama reports 100% of weights in GPU memory. Quote "
-                "decode ({:.1f} tok/s) when you compare setups.".format(
-                    decode) if decode else
-                "Ollama reports 100% of weights in GPU memory.")
+        para = "Ollama reports 100% of weights in GPU memory."
+        if decode:
+            para += (" Quote the warm median decode: {:.1f} "
+                     "tok/s.".format(decode))
         if prefill and decode and prefill > 3 * decode:
             para += (" {:.0f} tok/s is prefill: reading, not "
                      "writing.".format(prefill))
         return "HEALTHY", para
 
-    n, total = p2["offload_n"], p2["offload_total"]
+    n, total = rep["offload_n"], rep["offload_total"]
     if n is None:
         return "NO PLACEMENT EVIDENCE", (
             "This build did not report layer placement, so picchio cannot "
@@ -410,11 +446,11 @@ def diagnose(p1, p2, mode):
     if n == 0:
         para = "0 of {} layers reached the GPU.".format(total)
         if decode:
-            para += (" Decode ({:.1f} tok/s) looks passable, which is how "
-                     "this hides.".format(decode))
+            para += (" Decode ({:.1f}) looks passable, which is how this "
+                     "hides.".format(decode))
         if prefill:
-            para += " Prefill at {:.0f} tok/s puts{}. Check -ngl.".format(
-                prefill, wait)
+            para += (" Prefill at {:.0f} tok/s parks a 2500 token prompt "
+                     "{:.0f} s out. Check -ngl.".format(prefill, wait_s))
         return "SILENT CPU FALLBACK", para
     if total and n < total:
         return "PARTIAL OFFLOAD", (
@@ -424,11 +460,11 @@ def diagnose(p1, p2, mode):
         )
     para = "The GPU did the work."
     if decode:
-        para += (" Quote decode ({:.1f} tok/s) when you compare "
-                 "setups.".format(decode))
+        para += (" Quote the warm median decode: {:.1f} tok/s.".format(
+            decode))
     if prefill and decode and prefill > 3 * decode:
-        para += (" {:.0f} tok/s is real too, but it is prefill: reading "
-                 "speed, not writing speed.".format(prefill))
+        para += (" {:.0f} tok/s is prefill: reading speed, not "
+                 "writing.".format(prefill))
     return "HEALTHY", para
 
 
@@ -451,6 +487,11 @@ def classify_number(x, rates):
         "wallclock": "tokens over total wall time, load and all",
     }
     measured = ", ".join("{} {:.1f}".format(k, v) for k, v in lanes)
+    # The 1.30 band: wide enough to absorb the drift measured here
+    # (same weights across two runtimes differed 12% on decode; warm
+    # passes repeat within a few percent), narrow enough that decode
+    # and wallclock, 1.4x apart on this machine, cannot both claim the
+    # same number.
     if best_ratio <= 1.30:
         para = ("{:.1f} tok/s sits within {:.0f}% of the {} rate measured "
                 "here. That reads like {}. (measured: {} tok/s)".format(
@@ -471,6 +512,13 @@ def fmt_rate(v):
     return "{:.1f} tok/s".format(v) if v else "n/a"
 
 
+def fmt_span(lo, hi, big=False):
+    if lo is None:
+        return "-"
+    f = "{:.0f}~{:.0f}" if big else "{:.1f}~{:.1f}"
+    return f.format(lo, hi)
+
+
 def bar_line(label, secs, frac):
     barw = 28
     fill = max(0, min(barw, int(round(frac * barw))))
@@ -484,9 +532,9 @@ def wrap_para(text):
                          initial_indent="  ", subsequent_indent="  ")
 
 
-def gpu_line(p2, mode):
+def gpu_line(rep, mode):
     if mode == "ollama":
-        frac = p2["vram_frac"]
+        frac = rep["vram_frac"]
         if frac is None:
             return "EVIDENCE UNKNOWN (ollama gave no memory split)"
         pct = "{:.0f}% of weights in GPU memory (ollama ps)".format(
@@ -496,7 +544,7 @@ def gpu_line(p2, mode):
         if frac < 0.95:
             return "PARTIAL: " + pct
         return "ENGAGED: " + pct
-    n, total = p2["offload_n"], p2["offload_total"]
+    n, total = rep["offload_n"], rep["offload_total"]
     if n is None:
         return "NO EVIDENCE (engine did not report layer placement)"
     if n == 0:
@@ -505,42 +553,51 @@ def gpu_line(p2, mode):
         g = "PARTIAL: {}/{} layers on GPU".format(n, total)
     else:
         g = "ENGAGED: {}/{} layers on GPU".format(n, total)
-    if p2["gpu_kind"] and p2["gpu_device"]:
-        g += " ({}: {})".format(p2["gpu_kind"], p2["gpu_device"])
-    elif p2["gpu_kind"]:
-        g += " ({})".format(p2["gpu_kind"])
+    if rep["gpu_kind"] and rep["gpu_device"]:
+        g += " ({}: {})".format(rep["gpu_kind"], rep["gpu_device"])
+    elif rep["gpu_kind"]:
+        g += " ({})".format(rep["gpu_kind"])
     return g
 
 
-def render_verdict(mach, engine_str, model_name, p1, p2, state, para, mode,
+def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
                    explain_part=None, cold_note=None):
     """The whole block stays inside 15 lines and 66 columns, so it
     survives being pasted into a forum comment. That budget is a feature;
     do not add lines without removing others."""
+    cold = passes[0]
+    rep = build_rep(passes)
     out = []
     bits = [model_name]
-    if p2.get("model_params"):
-        bits.append(p2["model_params"])
-    if p2.get("model_size"):
-        bits.append(p2["model_size"])
+    if rep.get("model_params"):
+        bits.append(rep["model_params"])
+    if rep.get("model_size"):
+        bits.append(rep["model_size"])
     bits.append(engine_str)
     out.append("model    " + ", ".join(bits))
-    out.append("gpu      " + gpu_line(p2, mode))
+    out.append("gpu      " + gpu_line(rep, mode))
     out.append("           {:>13}  {:>13}  {:>13}".format(
         "prefill", "decode", "wallclock"))
-    for name, p in (("pass 1", p1), ("pass 2", p2)):
-        out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
-            name, fmt_rate(p["prefill_toks"]), fmt_rate(p["decode_toks"]),
-            fmt_rate(p["wallclock_toks"])))
+    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
+        "cold", fmt_rate(cold["prefill_toks"]), fmt_rate(cold["decode_toks"]),
+        fmt_rate(cold["wallclock_toks"])))
+    pm, plo, phi = warm_stats(passes, "prefill_toks")
+    dm, dlo, dhi = warm_stats(passes, "decode_toks")
+    wm, wlo, whi = warm_stats(passes, "wallclock_toks")
+    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
+        "warm mid", fmt_rate(pm), fmt_rate(dm), fmt_rate(wm)))
+    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
+        "warm span", fmt_span(plo, phi, big=True), fmt_span(dlo, dhi),
+        fmt_span(wlo, whi)))
 
-    wall = p1["wall_s"] or 0
-    load_s = (p1["load_ms"] or 0) / 1000.0
-    prefill_s = (p1["prompt_ms"] or 0) / 1000.0
-    decode_s = (p1["eval_ms"] or 0) / 1000.0
+    wall = cold["wall_s"] or 0
+    load_s = (cold["load_ms"] or 0) / 1000.0
+    prefill_s = (cold["prompt_ms"] or 0) / 1000.0
+    decode_s = (cold["eval_ms"] or 0) / 1000.0
     other_s = max(0.0, wall - load_s - prefill_s - decode_s)
-    title = "where pass 1 went ({:.1f} s wall".format(wall)
-    if p2.get("threads"):
-        title += ", {}/{} threads".format(p2["threads"], p2["cores"])
+    title = "where the cold pass went ({:.1f} s".format(wall)
+    if rep.get("threads"):
+        title += ", {}/{} threads".format(rep["threads"], rep["cores"])
     if cold_note:
         title += ", weights cached"
     out.append(title + ")")
@@ -549,14 +606,78 @@ def render_verdict(mach, engine_str, model_name, p1, p2, state, para, mode,
         out.append(bar_line("prefill", prefill_s, prefill_s / wall))
         out.append(bar_line("decode", decode_s, decode_s / wall))
         out.append(bar_line("engine misc", other_s, other_s / wall))
-    out.append("VERDICT: " + state)
-    out.extend(wrap_para(para))
+    out.extend(textwrap.wrap("VERDICT: {}. {}".format(state, para),
+                             width=WIDTH - 2, subsequent_indent="  "))
     if explain_part:
         out.append("YOUR NUMBER: " + explain_part[0])
         out.extend(wrap_para(explain_part[1]))
-    out.append("-- picchio v{} on {}, {} GB, {}".format(
-        VERSION, mach["chip"], mach["ram_gb"] or "?", mach["os"]))
+    out.append("-- picchio v{} {} on {}, {} GB, {}".format(
+        VERSION, PROTOCOL, mach["chip"], mach["ram_gb"] or "?", mach["os"]))
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------- selftest
+
+def selftest():
+    """Replays the raw engine logs committed under examples/raw through
+    the same parser, aggregation and diagnosis used live, re-renders each
+    block, and requires it to match the committed example line for line
+    (footer excluded: it names the machine that ran the replay)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    rawroot = os.path.join(here, "examples", "raw")
+    if not os.path.isdir(rawroot):
+        sys.exit("picchio: no examples/raw next to picchio.py")
+    fx_ok = fx_all = rp_ok = rp_all = 0
+    for name in sorted(os.listdir(rawroot)):
+        d = os.path.join(rawroot, name)
+        if not os.path.isdir(d):
+            continue
+        passes, metas = [], []
+        for i in range(1, 32):
+            stderr_p = os.path.join(d, "pass{}.stderr.txt".format(i))
+            resp_p = os.path.join(d, "pass{}.response.json".format(i))
+            meta_p = os.path.join(d, "pass{}.meta.json".format(i))
+            if not os.path.exists(meta_p):
+                break
+            meta = json.load(open(meta_p))
+            metas.append(meta)
+            fx_all += 1
+            if os.path.exists(stderr_p):
+                p = parse_stderr(open(stderr_p).read(), meta["wall_s"])
+                mode = "llama.cpp"
+            elif os.path.exists(resp_p):
+                p = map_ollama(json.load(open(resp_p)), meta["wall_s"],
+                               meta.get("ps"))
+                mode = "ollama"
+            else:
+                break
+            if p["prefill_toks"] and p["decode_toks"] and p["wallclock_toks"]:
+                fx_ok += 1
+            passes.append(p)
+        if not passes:
+            continue
+        rp_all += 1
+        txt_p = os.path.join(here, "examples", name + ".txt")
+        want = open(txt_p).read().rstrip().splitlines()
+        l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
+        cold_note = (l1 is not None and l2 is not None
+                     and l1 < 2 * l2 + 500)
+        state, para = diagnose(passes[0], build_rep(passes), mode)
+        got = render_verdict(
+            machine_info(), metas[0].get("engine", "?"),
+            metas[0].get("model_name", "?"), passes, state, para, mode,
+            None, cold_note).splitlines()
+        if got[:-1] == want[:-1]:
+            rp_ok += 1
+        else:
+            for a, b in zip(want, got):
+                if a != b:
+                    print("  {} mismatch:\n    want: {}\n    got:  {}".format(
+                        name, a, b))
+                    break
+    print("parser fixtures {}/{}, verdict replay {}/{}".format(
+        fx_ok, fx_all, rp_ok, rp_all))
+    sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -603,6 +724,10 @@ def main():
                     help="path to a .gguf file, or an ollama model tag")
     ap.add_argument("--bin", help="llama.cpp binary (default: find "
                                   "llama-completion or llama-cli on PATH)")
+    ap.add_argument("--passes", type=int, default=3, metavar="N",
+                    help="measurement passes; the first is the cold one, "
+                         "the verdict reports the warm median and span "
+                         "(default 3, min 2)")
     ap.add_argument("--explain", type=float, metavar="TOKS",
                     help="classify a tok/s number you saw somewhere against "
                          "this machine's measured rates")
@@ -611,10 +736,17 @@ def main():
     ap.add_argument("--keep-logs", metavar="DIR",
                     help="save the raw engine output of each pass into DIR "
                          "(the evidence behind the verdict)")
+    ap.add_argument("--selftest", action="store_true",
+                    help="replay examples/raw through the parser and "
+                         "diagnosis; verify the committed verdicts reproduce")
     ap.add_argument("extra", nargs="*", default=[],
                     help="args after -- go straight to the llama.cpp engine "
                          "(e.g. -- --device none -ngl 0)")
     args = ap.parse_args()
+
+    if args.selftest:
+        selftest()
+        return
 
     if args.model is None and args.explain is not None:
         cached = load_cache()
@@ -632,24 +764,29 @@ def main():
     if args.model is None:
         ap.print_help()
         sys.exit(2)
+    if args.passes < 2:
+        sys.exit("picchio: --passes must be at least 2 (one cold, one warm).")
 
     mach = machine_info()
-
     logdir = args.keep_logs
     lp = (lambda name: os.path.join(logdir, name)) if logdir else \
         (lambda name: None)
 
+    passes = []
     if os.path.isfile(args.model):
         mode = "llama.cpp"
         binpath = find_binary(args.bin)
         engine_str = "llama.cpp " + engine_version(binpath)
         model_name = os.path.basename(args.model)
-        sys.stderr.write("picchio: pass 1 (includes any cold load) ...\n")
-        p1 = run_llama_pass(binpath, args.model, args.extra,
-                            lp("pass1.stderr.txt"))
-        sys.stderr.write("picchio: pass 2 (warm) ...\n")
-        p2 = run_llama_pass(binpath, args.model, args.extra,
-                            lp("pass2.stderr.txt"))
+        for i in range(args.passes):
+            sys.stderr.write("picchio: pass {}{} ...\n".format(
+                i + 1, " (includes any cold load)" if i == 0 else " (warm)"))
+            p = run_llama_pass(binpath, args.model, args.extra,
+                               lp("pass{}.stderr.txt".format(i + 1)))
+            keep_log(lp("pass{}.meta.json".format(i + 1)), json.dumps(
+                {"wall_s": p["wall_s"], "engine": engine_str,
+                 "model_name": model_name}, indent=1))
+            passes.append(p)
     else:
         ver = ollama_reachable()
         if not ver:
@@ -670,29 +807,35 @@ def main():
             sys.stderr.write("picchio: unloading model for a colder "
                              "pass 1 ...\n")
             ollama_unload(args.model)
-        sys.stderr.write("picchio: pass 1 (includes any cold load) ...\n")
-        p1 = run_ollama_pass(args.model, lp("pass1.response.json"))
-        sys.stderr.write("picchio: pass 2 (warm) ...\n")
-        p2 = run_ollama_pass(args.model, lp("pass2.response.json"))
+        for i in range(args.passes):
+            sys.stderr.write("picchio: pass {}{} ...\n".format(
+                i + 1, " (includes any cold load)" if i == 0 else " (warm)"))
+            p, ps = run_ollama_pass(
+                args.model, lp("pass{}.response.json".format(i + 1)))
+            keep_log(lp("pass{}.meta.json".format(i + 1)), json.dumps(
+                {"wall_s": p["wall_s"], "engine": engine_str,
+                 "model_name": model_name, "ps": ps}, indent=1))
+            passes.append(p)
 
     cold_note = None
-    l1, l2 = p1["load_ms"], p2["load_ms"]
+    l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
     if l1 is not None and l2 is not None and l1 < 2 * l2 + 500:
         cold_note = True
 
-    state, para = diagnose(p1, p2, mode)
+    rep = build_rep(passes)
+    state, para = diagnose(passes[0], rep, mode)
 
     explain_part = None
     rates = {
-        "prefill": p2["prefill_toks"] or p1["prefill_toks"],
-        "decode": p2["decode_toks"] or p1["decode_toks"],
-        "wallclock": p2["wallclock_toks"] or p1["wallclock_toks"],
+        "prefill": rep["prefill_toks"],
+        "decode": rep["decode_toks"],
+        "wallclock": rep["wallclock_toks"],
     }
     if args.explain is not None:
         v, ep = classify_number(args.explain, rates)
         explain_part = ("{:.1f} tok/s -> {}".format(args.explain, v), ep)
 
-    block = render_verdict(mach, engine_str, model_name, p1, p2, state,
+    block = render_verdict(mach, engine_str, model_name, passes, state,
                            para, mode, explain_part, cold_note)
     print(block)
 
@@ -700,6 +843,7 @@ def main():
         "stamp": time.strftime("%Y-%m-%d %H:%M"),
         "model_name": model_name,
         "machine": "{}, {} GB".format(mach["chip"], mach["ram_gb"] or "?"),
+        "protocol": PROTOCOL,
         "rates": rates,
         "state": state,
     })
@@ -707,7 +851,8 @@ def main():
     if args.json:
         print(json.dumps({"machine": mach, "engine": engine_str,
                           "model": model_name, "mode": mode,
-                          "pass1": p1, "pass2": p2, "state": state},
+                          "protocol": PROTOCOL, "passes": passes,
+                          "warm_median": rates, "state": state},
                          indent=1))
 
     codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,

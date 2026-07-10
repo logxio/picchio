@@ -16,6 +16,11 @@ llama.cpp or ollama, you already have everything it needs. It runs your
 model twice with a fixed prompt, reads the engine's own numbers, and
 prints a verdict block sized to fit in a forum comment.
 
+Cost of a run: two passes, about half a minute on this machine with the
+GPU engaged, a few minutes on CPU. Read heavy; it reads your model file,
+writes one small cache file under `~/.cache/picchio`, modifies nothing,
+and leaves no process running afterwards.
+
 ## Why I wrote this
 
 Last week I had proof that my app was slowing local models down by a
@@ -248,9 +253,9 @@ I only own one computer, which is why most of this table is empty rows.
 Run picchio once and paste the verdict block into an issue, even if it
 says everything is fine; a boring HEALTHY on hardware I do not have is
 still a data point. And if the verdict gets your machine wrong, that is
-the issue I want most. Misdiagnosis reports go to the top of the pile,
-because a diagnostic that misreads machines it has never met is just a
-mirror with opinions.
+the issue I want most. Misdiagnosis reports have their own issue
+template and go to the top of the pile, because a diagnostic that
+misreads machines it has never met is just a mirror with opinions.
 
 | chip     | ram   | model, engine                      | prefill | decode | wallclock | verdict |
 |----------|-------|------------------------------------|---------|--------|-----------|---------|
@@ -259,6 +264,19 @@ mirror with opinions.
 |          |       |                                    |         |        |           |         |
 |          |       |                                    |         |        |           |         |
 |          |       |                                    |         |        |           |         |
+
+## Small glossary
+
+Five terms this repo leans on, one line each.
+
+- prefill: the model reading your prompt, in prompt tokens per second. Elsewhere called prompt processing or pp.
+- decode: the model writing its answer, one token at a time. Elsewhere called generation, tg, or eval.
+- wallclock: generated tokens divided by total elapsed time, load and everything included. The rate a stopwatch sees.
+- TTFT: time to first token, how long the screen stays empty. On a cold start this is roughly load plus prefill.
+- layer offload: how many model layers were placed on the GPU. 33/33 is a GPU run, 0/33 is a CPU run no matter what the config claimed.
+
+If one of these definitions is wrong, say so in an issue; the lane
+discipline stays, the wording is negotiable.
 
 ## What it does not do yet
 

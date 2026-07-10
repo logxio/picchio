@@ -561,6 +561,20 @@ def main():
         description="Knocks on your local LLM setup and listens for hollow "
                     "spots: are your tok/s numbers what you think they are, "
                     "and did the GPU actually do the work?",
+        epilog=(
+            "glossary:\n"
+            "  prefill    the model reading your prompt "
+            "(prompt tokens per second)\n"
+            "  decode     the model writing the answer "
+            "(generated tokens per second)\n"
+            "  wallclock  generated tokens over total elapsed time, "
+            "load included\n"
+            "  TTFT       time to first token, roughly load plus prefill "
+            "when cold\n"
+            "  offload    how many model layers sit on the GPU "
+            "(0/33 = CPU run)\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("model", nargs="?",
                     help="path to a .gguf file, or an ollama model tag")

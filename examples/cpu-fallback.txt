@@ -1,25 +1,15 @@
-picchio v0.1.0 .................................. 2026-07-11 02:57
-machine   Apple M5, 32 GB ram, macOS 26.5.1
-engine    llama.cpp build 9430 (d48a56eff), 4 of 10 cpu threads
-model     Qwen3.5-9B-Q4_K_M.gguf, 8.95 B params, 5.28 GiB on disk
-gpu       NOT ENGAGED: 0/33 layers on GPU
-
-                   prefill          decode       wallclock
-  pass 1        23.0 tok/s      10.8 tok/s       2.7 tok/s
-  pass 2        24.7 tok/s      10.7 tok/s       2.8 tok/s
-
-where pass 1 went (47.9 s wall)
-  load weights    2.1 s  #...........................    4%
-  prefill        33.1 s  ###################.........   69%
+model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
+gpu      NOT ENGAGED: 0/33 layers on GPU
+                 prefill         decode      wallclock
+  pass 1      24.8 tok/s     10.7 tok/s      2.7 tok/s
+  pass 2      24.9 tok/s     10.8 tok/s      2.8 tok/s
+where pass 1 went (47.9 s wall, 4/10 threads, weights cached)
+  load weights    4.4 s  ###.........................    9%
+  prefill        30.7 s  ##################..........   64%
   decode         11.8 s  #######.....................   25%
   engine misc     0.9 s  #...........................    2%
-  note: pass 1 was not a true cold start, weights were cached
-
 VERDICT: SILENT CPU FALLBACK
-  The engine loaded, answered, and never used the GPU: 0 of 33
-  layers offloaded, no GPU device initialized. Decode looks
-  almost normal (10.7 tok/s), which is why nobody notices.
-  Prefill gives it away: at 25 tok/s, a 2500 token prompt sits
-  101 s before the first word appears. Check -ngl and your build
-  flags.
-==================================================================
+  0 of 33 layers reached the GPU. Decode (10.8 tok/s) looks
+  passable, which is how this hides. Prefill at 25 tok/s puts a
+  2500 token prompt 101 s from its first word. Check -ngl.
+-- picchio v0.1.0 on Apple M5, 32 GB, macOS 26.5.1

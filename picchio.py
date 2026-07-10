@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-# picchio: knocks on your local llama.cpp setup and listens for hollow spots.
+# picchio: knocks on your local LLM setup and listens for hollow spots.
 #
 # What it does, in one run:
-#   1. runs the same fixed prompt through your model twice (pass 1 and pass 2)
-#   2. parses the engine's own timing and layer placement output
+#   1. runs the same fixed prompt through your model twice (cold-ish, warm)
+#   2. reads the engine's own timing and placement evidence
 #   3. reports prefill, decode and wallclock tok/s as three separate numbers
 #   4. tells you whether the GPU actually did the work, or quietly did not
 #   5. shows where the seconds of the first pass went (load, prefill, decode)
-#   6. prints a verdict block you can paste into an issue or a comment
+#   6. prints a verdict block sized to fit in a forum comment
 #
 # Usage:
-#   python3 picchio.py /path/to/model.gguf
-#   python3 picchio.py /path/to/model.gguf --explain 36
-#   python3 picchio.py --explain 36              (classifies against last run)
-#   python3 picchio.py model.gguf -- --device none -ngl 0   (args after --
-#                                       are passed straight to the engine)
+#   python3 picchio.py /path/to/model.gguf            llama.cpp, full diagnosis
+#   python3 picchio.py qwen3.5:9b                     ollama tag, measurement
+#   python3 picchio.py model.gguf --explain 36        classify a number you saw
+#   python3 picchio.py --explain 36                   same, against last run
+#   python3 picchio.py model.gguf -- --device none -ngl 0
+#                                       (args after -- go to the engine)
 #
-# Needs: python3 (any recent one), llama.cpp installed somewhere on PATH
-# (llama-completion, or llama-cli on older builds). Nothing else. No pip.
+# Needs: python3 (any recent one), plus llama.cpp on PATH or a local ollama.
+# Nothing else. No pip.
 #
 # Exit codes: 0 ok/healthy, 2 could not run, 3 partial offload,
 #             4 silent cpu fallback.
@@ -32,12 +33,15 @@ import subprocess
 import sys
 import textwrap
 import time
+import urllib.error
+import urllib.request
 
 VERSION = "0.1.0"
 WIDTH = 66
 N_PREDICT = 128
 CTX = 4096
 CACHE_PATH = os.path.expanduser("~/.cache/picchio/last.json")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "127.0.0.1:11434")
 
 # A fixed prompt of roughly 700 tokens. Prefill throughput measured on a
 # handful of tokens is dominated by per-call overhead and swings wildly;
@@ -100,7 +104,32 @@ def machine_info():
     return info
 
 
-# ------------------------------------------------------------------ engine
+def blank_pass():
+    return {
+        "wall_s": None,
+        "load_ms": None,
+        "prompt_ms": None, "prompt_tokens": None,
+        "eval_ms": None, "eval_tokens": None,
+        "offload_n": None, "offload_total": None,
+        "gpu_device": None, "gpu_kind": None,
+        "model_params": None, "model_size": None,
+        "threads": None, "cores": None,
+        "vram_frac": None,
+        "prefill_toks": None, "decode_toks": None, "wallclock_toks": None,
+    }
+
+
+def finish_rates(d):
+    if d["prompt_ms"] and d["prompt_tokens"]:
+        d["prefill_toks"] = d["prompt_tokens"] / (d["prompt_ms"] / 1000.0)
+    if d["eval_ms"] and d["eval_tokens"]:
+        d["decode_toks"] = d["eval_tokens"] / (d["eval_ms"] / 1000.0)
+    if d["eval_tokens"] and d["wall_s"]:
+        d["wallclock_toks"] = d["eval_tokens"] / d["wall_s"]
+    return d
+
+
+# ------------------------------------------------------- engine: llama.cpp
 
 def find_binary(explicit):
     if explicit:
@@ -123,11 +152,11 @@ def engine_version(binpath):
     out = _cmd_out([binpath, "--version"])
     m = re.search(r"version:\s*(\S+)\s*\(([0-9a-f]+)\)", out)
     if m:
-        return "build {} ({})".format(m.group(1), m.group(2))
+        return "b" + m.group(1)
     return os.path.basename(binpath)
 
 
-def run_pass(binpath, model, extra_args):
+def run_llama_pass(binpath, model, extra_args):
     base = [
         binpath,
         "-m", model,
@@ -170,16 +199,8 @@ def run_pass(binpath, model, extra_args):
 
 
 def parse_stderr(text, wall_s):
-    d = {
-        "wall_s": wall_s,
-        "load_ms": None,
-        "prompt_ms": None, "prompt_tokens": None,
-        "eval_ms": None, "eval_tokens": None,
-        "offload_n": None, "offload_total": None,
-        "gpu_device": None, "gpu_kind": None,
-        "model_params": None, "model_size": None,
-        "threads": None, "cores": None,
-    }
+    d = blank_pass()
+    d["wall_s"] = wall_s
     re_load = re.compile(r"load time\s*=\s*([\d.]+)\s*ms")
     re_pair = re.compile(r"=\s*([\d.]+)\s*ms\s*/\s*(\d+)\s*(?:tokens|runs)")
     re_off = re.compile(r"offloaded\s+(\d+)/(\d+)\s+layers to GPU")
@@ -230,73 +251,161 @@ def parse_stderr(text, wall_s):
             if m:
                 d["threads"] = int(m.group(1))
                 d["cores"] = int(m.group(2))
+    return finish_rates(d)
 
-    if d["prompt_ms"] and d["prompt_tokens"]:
-        d["prefill_toks"] = d["prompt_tokens"] / (d["prompt_ms"] / 1000.0)
-    else:
-        d["prefill_toks"] = None
-    if d["eval_ms"] and d["eval_tokens"]:
-        d["decode_toks"] = d["eval_tokens"] / (d["eval_ms"] / 1000.0)
-    else:
-        d["decode_toks"] = None
-    if d["eval_tokens"] and wall_s > 0:
-        d["wallclock_toks"] = d["eval_tokens"] / wall_s
-    else:
-        d["wallclock_toks"] = None
-    return d
+
+# ---------------------------------------------------------- engine: ollama
+
+def ollama_api(path, payload=None, timeout=1800):
+    url = "http://{}{}".format(OLLAMA_HOST, path)
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        url, data=data, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def ollama_reachable():
+    try:
+        return ollama_api("/api/version", timeout=3).get("version", "?")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
+def ollama_has_model(tag):
+    try:
+        ollama_api("/api/show", {"model": tag}, timeout=15)
+        return True
+    except urllib.error.HTTPError:
+        return False
+
+
+def ollama_ps_entry(tag):
+    try:
+        for m in ollama_api("/api/ps", timeout=15).get("models", []):
+            if m.get("name") == tag or m.get("model") == tag:
+                return m
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+    return None
+
+
+def run_ollama_pass(tag):
+    t0 = time.monotonic()
+    resp = ollama_api("/api/generate", {
+        "model": tag,
+        "prompt": BENCH_PROMPT,
+        "stream": False,
+        "options": {"num_predict": N_PREDICT, "num_ctx": CTX, "seed": 7},
+    })
+    wall_s = time.monotonic() - t0
+    d = blank_pass()
+    d["wall_s"] = wall_s
+    ns = 1e6  # ns -> ms
+    if resp.get("load_duration"):
+        d["load_ms"] = resp["load_duration"] / ns
+    if resp.get("prompt_eval_duration") and resp.get("prompt_eval_count"):
+        d["prompt_ms"] = resp["prompt_eval_duration"] / ns
+        d["prompt_tokens"] = resp["prompt_eval_count"]
+    if resp.get("eval_duration") and resp.get("eval_count"):
+        d["eval_ms"] = resp["eval_duration"] / ns
+        d["eval_tokens"] = resp["eval_count"]
+    ps = ollama_ps_entry(tag)
+    if ps:
+        size, vram = ps.get("size"), ps.get("size_vram")
+        if size:
+            d["model_size"] = "{:.2f} GiB".format(size / (1024 ** 3))
+            d["vram_frac"] = (vram or 0) / size
+        det = ps.get("details") or {}
+        if det.get("parameter_size"):
+            d["model_params"] = det["parameter_size"].rstrip("B") + " B"
+        if det.get("quantization_level"):
+            d["model_params"] += ", " + det["quantization_level"]
+    return finish_rates(d)
+
+
+def ollama_unload(tag):
+    try:
+        ollama_api("/api/generate", {"model": tag, "keep_alive": 0},
+                   timeout=60)
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
 
 
 # --------------------------------------------------------------- diagnosis
 
-def diagnose(p1, p2):
-    """Returns (state, paragraph). State drives the exit code."""
-    n, total = p2["offload_n"], p2["offload_total"]
-    gpu = p2["gpu_kind"]
+def diagnose(p1, p2, mode):
+    """Returns (state, paragraph). State drives the exit code.
+    Paragraphs are kept short: the whole block must fit in 15 lines."""
     decode = p2["decode_toks"] or p1["decode_toks"]
     prefill = p2["prefill_toks"] or p1["prefill_toks"]
+    wait = ""
+    if prefill:
+        wait = " a 2500 token prompt {:.0f} s from its first word".format(
+            2500.0 / prefill)
 
+    if mode == "ollama":
+        frac = p2["vram_frac"]
+        if frac is None:
+            return "NO PLACEMENT EVIDENCE", (
+                "Ollama did not report a memory split for this model, so "
+                "picchio cannot say where it ran. Rates are measured; "
+                "placement is not."
+            )
+        if frac < 0.05:
+            para = ("Ollama reports 0% of weights in GPU memory. Decode "
+                    "({:.1f} tok/s) may look passable, which is how this "
+                    "hides.".format(decode) if decode else
+                    "Ollama reports 0% of weights in GPU memory.")
+            if prefill:
+                para += (" Prefill at {:.0f} tok/s puts{}.".format(
+                    prefill, wait))
+            return "SILENT CPU FALLBACK", para
+        if frac < 0.95:
+            return "PARTIAL OFFLOAD", (
+                "Ollama reports {:.0f}% of weights in GPU memory, the rest "
+                "on CPU, usually a memory fit call. Expect rates below a "
+                "fully offloaded model.".format(frac * 100)
+            )
+        para = ("Ollama reports 100% of weights in GPU memory. Quote "
+                "decode ({:.1f} tok/s) when you compare setups.".format(
+                    decode) if decode else
+                "Ollama reports 100% of weights in GPU memory.")
+        if prefill and decode and prefill > 3 * decode:
+            para += (" {:.0f} tok/s is prefill: reading, not "
+                     "writing.".format(prefill))
+        return "HEALTHY", para
+
+    n, total = p2["offload_n"], p2["offload_total"]
     if n is None:
         return "NO PLACEMENT EVIDENCE", (
-            "This engine build did not report layer placement, so picchio "
-            "cannot prove where the model ran. The rates above are still "
-            "measured. If prefill is not far above decode, suspect the CPU "
-            "and rerun with a newer llama.cpp build."
+            "This build did not report layer placement, so picchio cannot "
+            "prove where the model ran. Rates are measured; placement is "
+            "not. A newer llama.cpp build logs it."
         )
-
     if n == 0:
-        if gpu:
-            placement = ("0 of {} layers offloaded (a {} device was "
-                         "initialized, then left idle)".format(total, gpu))
-        else:
-            placement = ("0 of {} layers offloaded, no GPU device "
-                         "initialized".format(total))
-        para = ("The engine loaded, answered, and never used the GPU: "
-                + placement + ".")
+        para = "0 of {} layers reached the GPU.".format(total)
         if decode:
-            para += (" Decode looks almost normal ({:.1f} tok/s), which is "
-                     "why nobody notices.".format(decode))
+            para += (" Decode ({:.1f} tok/s) looks passable, which is how "
+                     "this hides.".format(decode))
         if prefill:
-            para += (" Prefill gives it away: at {:.0f} tok/s, a 2500 token "
-                     "prompt sits {:.0f} s before the first word appears. "
-                     "Check -ngl and your build flags.".format(
-                         prefill, 2500.0 / prefill))
+            para += " Prefill at {:.0f} tok/s puts{}. Check -ngl.".format(
+                prefill, wait)
         return "SILENT CPU FALLBACK", para
-
     if total and n < total:
         return "PARTIAL OFFLOAD", (
-            "{} of {} layers made it to the GPU, the rest run on CPU. "
-            "Usually a memory fit decision by the engine. Expect prefill "
-            "and decode both below what this machine can do with a model "
-            "or quant that fits entirely.".format(n, total)
+            "{} of {} layers fit on the GPU, the rest run on CPU, usually "
+            "a memory fit call. Expect rates below a fully offloaded "
+            "model.".format(n, total)
         )
-
     para = "The GPU did the work."
     if decode:
-        para += (" Quote the decode number ({:.1f} tok/s) when you compare "
+        para += (" Quote decode ({:.1f} tok/s) when you compare "
                  "setups.".format(decode))
     if prefill and decode and prefill > 3 * decode:
-        para += (" {:.0f} tok/s is real too, but that is prefill: prompt "
-                 "reading speed, not generation speed.".format(prefill))
+        para += (" {:.0f} tok/s is real too, but it is prefill: reading "
+                 "speed, not writing speed.".format(prefill))
     return "HEALTHY", para
 
 
@@ -352,70 +461,78 @@ def wrap_para(text):
                          initial_indent="  ", subsequent_indent="  ")
 
 
-def render_verdict(mach, engine_str, model_name, p1, p2, state, para,
-                   explain_part=None, cold_note=None):
-    out = []
-    stamp = time.strftime("%Y-%m-%d %H:%M")
-    head = "picchio v{} ".format(VERSION)
-    dots = "." * (WIDTH - len(head) - len(stamp) - 1)
-    out.append(head + dots + " " + stamp)
-    out.append("machine   {}, {} GB ram, {}".format(
-        mach["chip"], mach["ram_gb"] or "?", mach["os"]))
-    eng = "llama.cpp {}".format(engine_str)
-    if p2.get("threads"):
-        eng += ", {} of {} cpu threads".format(p2["threads"], p2["cores"])
-    out.append("engine    " + eng)
-    bits = [model_name]
-    if p2.get("model_params"):
-        bits.append("{} params".format(p2["model_params"]))
-    if p2.get("model_size"):
-        bits.append("{} on disk".format(p2["model_size"]))
-    out.append("model     " + ", ".join(bits))
-
+def gpu_line(p2, mode):
+    if mode == "ollama":
+        frac = p2["vram_frac"]
+        if frac is None:
+            return "EVIDENCE UNKNOWN (ollama gave no memory split)"
+        pct = "{:.0f}% of weights in GPU memory (ollama ps)".format(
+            frac * 100)
+        if frac < 0.05:
+            return "NOT ENGAGED: " + pct
+        if frac < 0.95:
+            return "PARTIAL: " + pct
+        return "ENGAGED: " + pct
     n, total = p2["offload_n"], p2["offload_total"]
     if n is None:
-        gline = "NO EVIDENCE (engine did not report layer placement)"
-    elif n == 0:
-        gline = "NOT ENGAGED: 0/{} layers on GPU".format(total)
+        return "NO EVIDENCE (engine did not report layer placement)"
+    if n == 0:
+        g = "NOT ENGAGED: 0/{} layers on GPU".format(total)
     elif n < total:
-        gline = "PARTIAL: {}/{} layers on GPU".format(n, total)
+        g = "PARTIAL: {}/{} layers on GPU".format(n, total)
     else:
-        gline = "ENGAGED: {}/{} layers on GPU".format(n, total)
+        g = "ENGAGED: {}/{} layers on GPU".format(n, total)
     if p2["gpu_kind"] and p2["gpu_device"]:
-        gline += " ({}: {})".format(p2["gpu_kind"], p2["gpu_device"])
+        g += " ({}: {})".format(p2["gpu_kind"], p2["gpu_device"])
     elif p2["gpu_kind"]:
-        gline += " ({})".format(p2["gpu_kind"])
-    out.append("gpu       " + gline)
-    out.append("")
-    out.append("            {:>14}  {:>14}  {:>14}".format(
+        g += " ({})".format(p2["gpu_kind"])
+    return g
+
+
+def render_verdict(mach, engine_str, model_name, p1, p2, state, para, mode,
+                   explain_part=None, cold_note=None):
+    """The whole block stays inside 15 lines and 66 columns, so it
+    survives being pasted into a forum comment. That budget is a feature;
+    do not add lines without removing others."""
+    out = []
+    bits = [model_name]
+    if p2.get("model_params"):
+        bits.append(p2["model_params"])
+    if p2.get("model_size"):
+        bits.append(p2["model_size"])
+    bits.append(engine_str)
+    out.append("model    " + ", ".join(bits))
+    out.append("gpu      " + gpu_line(p2, mode))
+    out.append("           {:>13}  {:>13}  {:>13}".format(
         "prefill", "decode", "wallclock"))
     for name, p in (("pass 1", p1), ("pass 2", p2)):
-        out.append("  {:<10}{:>14}  {:>14}  {:>14}".format(
+        out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
             name, fmt_rate(p["prefill_toks"]), fmt_rate(p["decode_toks"]),
             fmt_rate(p["wallclock_toks"])))
-    out.append("")
 
-    wall = p1["wall_s"]
+    wall = p1["wall_s"] or 0
     load_s = (p1["load_ms"] or 0) / 1000.0
     prefill_s = (p1["prompt_ms"] or 0) / 1000.0
     decode_s = (p1["eval_ms"] or 0) / 1000.0
     other_s = max(0.0, wall - load_s - prefill_s - decode_s)
-    out.append("where pass 1 went ({:.1f} s wall)".format(wall))
+    title = "where pass 1 went ({:.1f} s wall".format(wall)
+    if p2.get("threads"):
+        title += ", {}/{} threads".format(p2["threads"], p2["cores"])
+    if cold_note:
+        title += ", weights cached"
+    out.append(title + ")")
     if wall > 0:
         out.append(bar_line("load weights", load_s, load_s / wall))
         out.append(bar_line("prefill", prefill_s, prefill_s / wall))
         out.append(bar_line("decode", decode_s, decode_s / wall))
         out.append(bar_line("engine misc", other_s, other_s / wall))
-    if cold_note:
-        out.append("  note: " + cold_note)
-    out.append("")
     out.append("VERDICT: " + state)
     out.extend(wrap_para(para))
     if explain_part:
-        out.append("")
         out.append("YOUR NUMBER: " + explain_part[0])
         out.extend(wrap_para(explain_part[1]))
-    out.append("=" * WIDTH)
+    out.append("-- picchio v{} on {}, {} GB, {}".format(
+        VERSION, mach["chip"], mach["ram_gb"] or "?", mach["os"]))
     return "\n".join(out)
 
 
@@ -441,12 +558,13 @@ def load_cache():
 def main():
     ap = argparse.ArgumentParser(
         prog="picchio",
-        description="Knocks on your llama.cpp setup and listens for hollow "
+        description="Knocks on your local LLM setup and listens for hollow "
                     "spots: are your tok/s numbers what you think they are, "
                     "and did the GPU actually do the work?",
     )
-    ap.add_argument("model", nargs="?", help="path to a .gguf model file")
-    ap.add_argument("--bin", help="engine binary (default: find "
+    ap.add_argument("model", nargs="?",
+                    help="path to a .gguf file, or an ollama model tag")
+    ap.add_argument("--bin", help="llama.cpp binary (default: find "
                                   "llama-completion or llama-cli on PATH)")
     ap.add_argument("--explain", type=float, metavar="TOKS",
                     help="classify a tok/s number you saw somewhere against "
@@ -454,7 +572,7 @@ def main():
     ap.add_argument("--json", action="store_true",
                     help="print raw measurements as JSON after the verdict")
     ap.add_argument("extra", nargs="*", default=[],
-                    help="args after -- go straight to the engine "
+                    help="args after -- go straight to the llama.cpp engine "
                          "(e.g. -- --device none -ngl 0)")
     args = ap.parse_args()
 
@@ -462,7 +580,7 @@ def main():
         cached = load_cache()
         if not cached:
             sys.exit("picchio: no previous run cached; run with a model "
-                     "path first.")
+                     "first.")
         verdict, para = classify_number(args.explain, cached["rates"])
         print("YOUR NUMBER: {:.1f} tok/s -> {}".format(args.explain, verdict))
         print("\n".join(wrap_para(para)))
@@ -473,25 +591,49 @@ def main():
     if args.model is None:
         ap.print_help()
         sys.exit(2)
-    if not os.path.isfile(args.model):
-        sys.exit("picchio: model file not found: {}".format(args.model))
 
-    binpath = find_binary(args.bin)
-    engine_str = engine_version(binpath)
     mach = machine_info()
-    model_name = os.path.basename(args.model)
 
-    sys.stderr.write("picchio: pass 1 (includes any cold load) ...\n")
-    p1 = run_pass(binpath, args.model, args.extra)
-    sys.stderr.write("picchio: pass 2 (warm) ...\n")
-    p2 = run_pass(binpath, args.model, args.extra)
+    if os.path.isfile(args.model):
+        mode = "llama.cpp"
+        binpath = find_binary(args.bin)
+        engine_str = "llama.cpp " + engine_version(binpath)
+        model_name = os.path.basename(args.model)
+        sys.stderr.write("picchio: pass 1 (includes any cold load) ...\n")
+        p1 = run_llama_pass(binpath, args.model, args.extra)
+        sys.stderr.write("picchio: pass 2 (warm) ...\n")
+        p2 = run_llama_pass(binpath, args.model, args.extra)
+    else:
+        ver = ollama_reachable()
+        if not ver:
+            sys.exit(
+                "picchio: {} is not a file, and no ollama answered at "
+                "{}.\nGive a .gguf path, or start ollama and give a model "
+                "tag.".format(args.model, OLLAMA_HOST))
+        if not ollama_has_model(args.model):
+            sys.exit("picchio: ollama at {} does not know the model "
+                     "{!r}.".format(OLLAMA_HOST, args.model))
+        if args.extra:
+            sys.exit("picchio: passthrough args after -- only work in "
+                     "llama.cpp mode.")
+        mode = "ollama"
+        engine_str = "ollama " + ver
+        model_name = args.model
+        if ollama_ps_entry(args.model):
+            sys.stderr.write("picchio: unloading model for a colder "
+                             "pass 1 ...\n")
+            ollama_unload(args.model)
+        sys.stderr.write("picchio: pass 1 (includes any cold load) ...\n")
+        p1 = run_ollama_pass(args.model)
+        sys.stderr.write("picchio: pass 2 (warm) ...\n")
+        p2 = run_ollama_pass(args.model)
 
     cold_note = None
     l1, l2 = p1["load_ms"], p2["load_ms"]
-    if l1 and l2 and l1 < 2 * l2 + 500:
-        cold_note = "pass 1 was not a true cold start, weights were cached"
+    if l1 is not None and l2 is not None and l1 < 2 * l2 + 500:
+        cold_note = True
 
-    state, para = diagnose(p1, p2)
+    state, para = diagnose(p1, p2, mode)
 
     explain_part = None
     rates = {
@@ -504,7 +646,7 @@ def main():
         explain_part = ("{:.1f} tok/s -> {}".format(args.explain, v), ep)
 
     block = render_verdict(mach, engine_str, model_name, p1, p2, state,
-                           para, explain_part, cold_note)
+                           para, mode, explain_part, cold_note)
     print(block)
 
     save_cache({
@@ -516,8 +658,9 @@ def main():
 
     if args.json:
         print(json.dumps({"machine": mach, "engine": engine_str,
-                          "model": model_name, "pass1": p1, "pass2": p2,
-                          "state": state}, indent=1))
+                          "model": model_name, "mode": mode,
+                          "pass1": p1, "pass2": p2, "state": state},
+                         indent=1))
 
     codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
              "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4}

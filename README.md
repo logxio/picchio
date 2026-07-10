@@ -260,21 +260,21 @@ Apple M5, 32 GB, macOS 26.5.1, llama.cpp build 9430 and ollama 0.31.1,
 roughly 730 prompt tokens and 128 generated tokens per pass, three
 passes, the first one cold. That protocol is named in every block
 footer (mp1); if it ever changes, the tag changes, so numbers from
-different protocols never sit in one series. Ranges below span the
-cold pass and the warm spread of the recorded runs in
-[examples/](examples/). Every number in this table came out of a real
-run on this hardware; there are no projected or extrapolated numbers
-anywhere in this repo, and rows for hardware I do not own stay empty
-until someone runs it there. The unedited engine output behind each
+different protocols never sit in one series.
+
+Every number in this table came out of a real run on this hardware;
+there are no projected or extrapolated numbers anywhere in this repo.
+Ranges span the cold pass and the warm spread of the recorded runs in
+[examples/](examples/), and the unedited engine output behind each
 example sits in [examples/raw/](examples/raw/), written by the
 `--keep-logs` flag: the verdict quotes the numbers, the log is where
 they came from.
 
 | config                          | prefill tok/s | decode tok/s | wallclock tok/s |
-|---------------------------------|---------------|--------------|-----------------|
-| Qwen3.5-9B Q4_K_M, Metal 33/33  | 522 - 597     | 17.2 - 21.2  | 11.4 - 15.6     |
-| Qwen3.5-9B Q4_K_M, CPU 0/33     | 24.3 - 26.4   | 9.3 - 11.4   | 2.7 - 2.9       |
-| qwen3.5:9b via ollama, 100% GPU | 539 - 860     | 19.3 - 20.4  | 12.2 - 17.4     |
+|---------------------------------|--------------:|-------------:|----------------:|
+| Qwen3.5-9B Q4_K_M, Metal 33/33  |     522 - 597 |  17.2 - 21.2 |     11.4 - 15.6 |
+| Qwen3.5-9B Q4_K_M, CPU 0/33     |   24.3 - 26.4 |   9.3 - 11.4 |       2.7 - 2.9 |
+| qwen3.5:9b via ollama, 100% GPU |     539 - 860 |  19.3 - 20.4 |     12.2 - 17.4 |
 
 Load time for the 5.28 GiB file: 3.3 s the first time it was ever read,
 1.7 to 1.8 s after a cache flush, 0.4 s when the weights were still in
@@ -286,25 +286,25 @@ so run picchio on a machine that is otherwise idle.
 
 ## Verdicts from other machines
 
-I only own one computer, which is why most of this table is empty rows.
+I only own one computer, which is why this table is mostly missing.
 Run picchio once and paste the verdict block into an issue, even if it
 says everything is fine; a boring HEALTHY on hardware I do not have is
-still a data point. And if the verdict gets your machine wrong, that is
-the issue I want most. Misdiagnosis reports have their own issue
-template and go to the top of the pile, because a diagnostic that
-misreads machines it has never met is just a mirror with opinions.
+still a data point.
+
+If the verdict gets your machine wrong, that is the issue I want most.
+Misdiagnosis reports have their own issue template and go to the top
+of the pile, because a diagnostic that misreads machines it has never
+met is just a mirror with opinions.
 
 The prefill, decode and wallclock columns hold warm medians, and the
 protocol column says which measurement recipe produced them, so rows
 stay comparable within a tag.
 
-| chip     | ram   | model, engine                      | protocol | prefill | decode | wallclock | verdict |
-|----------|-------|------------------------------------|----------|---------|--------|-----------|---------|
-| Apple M5 | 32 GB | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      | 558.9   | 20.0   | 14.4      | HEALTHY |
-| Apple M5 | 32 GB | qwen3.5:9b, ollama 0.31.1          | mp1      | 853.5   | 19.9   | 17.1      | HEALTHY |
-|          |       |                                    |          |         |        |           |         |
-|          |       |                                    |          |         |        |           |         |
-|          |       |                                    |          |         |        |           |         |
+| machine         | model, engine                      | protocol | prefill | decode | wallclock | verdict |
+|-----------------|------------------------------------|----------|--------:|-------:|----------:|---------|
+| Apple M5, 32 GB | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      |   558.9 |   20.0 |      14.4 | HEALTHY |
+| Apple M5, 32 GB | qwen3.5:9b, ollama 0.31.1          | mp1      |   853.5 |   19.9 |      17.1 | HEALTHY |
+| your machine    |                                    |          |         |        |           |         |
 
 ## Small glossary
 
@@ -324,14 +324,18 @@ discipline stays, the wording is negotiable.
 The tested path is one Apple Silicon machine, llama.cpp and ollama.
 Linux parsing (CUDA and Vulkan log lines, /proc hardware info) is
 written but has not touched real hardware; if you run it there, I want
-the verdict block either way. MLX, LM Studio and remote servers are out
-of scope. Old llama.cpp builds are handled with a flag fallback ladder,
-but very old builds may only get partial evidence, and picchio will say
-so rather than guess. Passes run back to back, so the first is only a
-true cold start if the model was not recently loaded; when the load
-times give that away, the block says weights cached. Warm prefill here
-still carries some spread (522~596 across two warm passes); more
-passes tighten the median at the cost of runtime (`--passes 5`).
+the verdict block either way.
+
+MLX, LM Studio and remote servers are out of scope. Old llama.cpp
+builds are handled with a flag fallback ladder, but very old builds
+may only get partial evidence, and picchio will say so rather than
+guess.
+
+Passes run back to back, so the first is only a true cold start if the
+model was not recently loaded; when the load times give that away, the
+block says weights cached. Warm prefill here still carries some spread
+(522~596 across two warm passes); more passes tighten the median at
+the cost of runtime (`--passes 5`).
 
 Exit codes, for scripting: 0 healthy or no evidence, 2 could not run,
 3 partial offload, 4 silent CPU fallback, 5 conflicting evidence.

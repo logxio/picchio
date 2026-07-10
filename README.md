@@ -303,5 +303,3 @@ Exit codes, for scripting: 0 healthy or no evidence, 2 could not run,
 ## License
 
 MIT.
-
-<!-- TODO: footer product link pending publisher identity decision -->

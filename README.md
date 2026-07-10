@@ -1,18 +1,29 @@
-# picchio
+<div align="center">
 
-[![selftest](https://github.com/snxoi/picchio/actions/workflows/selftest.yml/badge.svg)](https://github.com/snxoi/picchio/actions/workflows/selftest.yml)
+<h1>picchio</h1>
 
-Picchio is Italian for woodpecker. Woodpeckers find hollow wood by knocking
-on it and listening. This is a single Python file that knocks on your local
-LLM setup and listens for the two most common hollow spots: tok/s numbers
-that do not mean what you think they mean, and a GPU that quietly did
-nothing while the CPU did all the work.
+<p>Picchio is Italian for woodpecker: one Python file that knocks on
+your local LLM setup and listens for hollow spots. Which tok/s did
+you actually get, and did the GPU really do the work?</p>
 
-Real output from the machine this was built on, unedited
-([examples/healthy-metal.txt](examples/healthy-metal.txt)). The block
-is 15 lines and 66 columns on purpose, so it survives being pasted
-into a comment thread as is: the cold pass first, then the median and
-spread of the warm passes.
+<p>
+<a href="https://github.com/snxoi/picchio/actions/workflows/selftest.yml"><img src="https://github.com/snxoi/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f" alt="license: MIT"></a>
+<img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
+</p>
+
+<p><a href="#get-it-running">Install</a> · <a href="#the-three-numbers">What it checks</a> · <a href="examples/">Examples</a></p>
+
+<img src="assets/healthy-verdict.svg" width="600" alt="picchio verdict block in a terminal: GPU ENGAGED 33/33 layers, three lanes reported, verdict HEALTHY">
+
+</div>
+
+That block is the whole product: three lanes that never get merged,
+placement evidence from the engine's own logs, a breakdown of the cold
+pass, and a verdict. It is 15 lines and 66 columns on purpose, so it
+survives being pasted into a comment thread. Real output, unedited
+([examples/healthy-metal.txt](examples/healthy-metal.txt)); the text
+version below is the one you paste:
 
 ```
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
@@ -319,7 +330,7 @@ says everything is fine; a boring HEALTHY on hardware I do not have is
 still a data point.
 
 If the verdict gets your machine wrong, that is the issue I want most.
-Misdiagnosis reports have their own issue template and go to the top
+Misdiagnosis reports have their own [issue template](.github/ISSUE_TEMPLATE/misdiagnosis-report.md) and go to the top
 of the pile, because a diagnostic that misreads machines it has never
 met is just a mirror with opinions.
 
@@ -369,4 +380,4 @@ Exit codes, for scripting: 0 healthy or no evidence, 2 could not run,
 
 ## License
 
-MIT.
+[MIT](LICENSE).

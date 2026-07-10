@@ -21,6 +21,10 @@ GPU engaged, a few minutes on CPU. Read heavy; it reads your model file,
 writes one small cache file under `~/.cache/picchio`, modifies nothing,
 and leaves no process running afterwards.
 
+When to rerun it: after a llama.cpp or ollama upgrade, after an OS
+update, after switching quants of the same model, after touching -ngl
+or context size, and once before you post a tok/s number anywhere.
+
 ## Why I wrote this
 
 While testing local models for an app I am building, I nearly filed a
@@ -217,12 +221,12 @@ Concretely, measured on this machine, same model, same day:
 
 | tool, config              | prompt side   | generation side | notes                     |
 |---------------------------|---------------|-----------------|---------------------------|
-| llama-bench, default      | pp256: 610.13 | tg64: 20.87     | backend column: BLAS,MTL  |
-| llama-bench, -ngl 0 (CPU) | pp128: 30.66  | tg32: 13.25     | backend column: BLAS,MTL  |
+| llama-bench, default      | pp256: 597.06 | tg64: 20.21     | backend column: BLAS,MTL  |
+| llama-bench, -ngl 0 (CPU) | pp256: 27.82  | tg64: 11.90     | backend column: BLAS,MTL  |
 
 Both rows report the same backend, because that column describes what
 the binary was compiled with, not where your tokens were computed. The
-20x prompt side collapse is the only visible trace of the CPU run, and
+21x prompt side collapse is the only visible trace of the CPU run, and
 you can only read it if you already know the healthy baseline. There is
 also no load time, no cold and warm split, and no interpretation; that
 last part is fair, a benchmark is not supposed to have opinions.

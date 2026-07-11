@@ -7,7 +7,9 @@
 #   2. reads the engine's own timing and placement evidence
 #   3. reports prefill, decode and wallclock tok/s as three separate lanes,
 #      cold pass first, then the warm median and the warm spread
-#   4. tells you whether the GPU actually did the work, or quietly did not
+#   4. tells you whether the GPU actually did the work, or quietly did
+#      not, and on a degraded verdict adds one WHY line naming the cause
+#      it can prove (explicit flag, memory fit, init failure) or unknown
 #   5. shows where the seconds of the cold pass went (load, prefill, decode)
 #   6. prints a verdict block sized to fit in a forum comment
 #
@@ -126,6 +128,7 @@ def blank_pass():
         "model_params": None, "model_size": None,
         "threads": None, "cores": None,
         "vram_frac": None,
+        "free_mib": None, "fit_seen": False, "init_fail": None,
         "prefill_toks": None, "decode_toks": None, "wallclock_toks": None,
     }
 
@@ -232,6 +235,9 @@ def parse_stderr(text, wall_s):
     re_params = re.compile(r"model params\s*=\s*([\d.]+\s*\S?)")
     re_size = re.compile(r"file size\s*=\s*([\d.]+\s*\S+)")
     re_threads = re.compile(r"n_threads\s*=\s*(\d+).*?/\s*(\d+)")
+    # e.g. "using device MTL0 (Apple M5) (unknown id) - 25558 MiB free":
+    # the free figure the engine itself saw, kept for WHY attribution.
+    re_free = re.compile(r"-\s*(\d+)\s*MiB free")
 
     for line in text.splitlines():
         if "prompt eval time" in line:
@@ -277,6 +283,20 @@ def parse_stderr(text, wall_s):
                 # move a lot with -t and the block should say so.
                 d["threads"] = int(m.group(1))
                 d["cores"] = int(m.group(2))
+        m = re_free.search(line)
+        if m:
+            d["free_mib"] = int(m.group(1))
+        if "common_params_fit_impl" in line:
+            d["fit_seen"] = True
+        low = line.lower()
+        if (d["init_fail"] is None
+                and ("error" in low or "failed" in low)
+                and ("ggml_metal" in low or "ggml_cuda" in low
+                     or "ggml_vulkan" in low or "ggml_backend" in low)):
+            # first backend init failure line, verbatim minus the
+            # "0.00.061.339 I " style log prefix some builds prepend
+            d["init_fail"] = re.sub(r"^[\d.]+\s+[A-Z]\s+", "",
+                                    line.strip())
     return finish_rates(d)
 
 
@@ -451,15 +471,92 @@ def build_rep(passes):
     return rep
 
 
+# ------------------------------------------------------- WHY attribution
+
+def placement_flags(argv):
+    """Placement flags found on the engine command line, verbatim."""
+    names = ("-ngl", "--n-gpu-layers", "--gpu-layers", "--device", "-dev")
+    out, i = [], 0
+    while i < len(argv):
+        tok = argv[i]
+        for n in names:
+            if tok == n and i + 1 < len(argv):
+                out.append((n, argv[i + 1]))
+                i += 1
+                break
+            if tok.startswith(n + "="):
+                out.append((n, tok.split("=", 1)[1]))
+                break
+        i += 1
+    return out
+
+
+def attribute_why(state, rep, mode, engine_argv):
+    """One WHY line for a degraded verdict, None otherwise. Climbs a
+    fixed evidence ladder and stops at the first rung with real evidence
+    behind it: an explicit flag the user passed, the engine's own memory
+    fit figures, a backend init failure line. Every rung requires its
+    evidence to be present in this run; when none is, the honest answer
+    is the word unknown, not a plausible guess."""
+    if state not in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
+                     "CONFLICTING EVIDENCE"):
+        return None
+    why = None
+    if mode == "ollama":
+        # the ollama api exposes no command line, no fit log and no
+        # init log, so the ladder has no rungs to climb here
+        why = "unknown: not in the ollama api (check the server log)"
+    else:
+        n, total = rep["offload_n"], rep["offload_total"]
+        forced = []
+        for name, val in placement_flags(engine_argv):
+            # a flag only counts as the cause when its value matches the
+            # placement the engine delivered; a flag that asked for more
+            # GPU than was given did not cause the shortfall
+            if (name in ("--device", "-dev")
+                    and val.lower() in ("none", "cpu") and n == 0):
+                forced.append("{} {}".format(name, val))
+            elif (name in ("-ngl", "--n-gpu-layers", "--gpu-layers")
+                    and val.isdigit() and n is not None
+                    and int(val) == n and total and n < total):
+                forced.append("{} {}".format(name, val))
+        if forced:
+            why = "forced by flag: " + " ".join(forced)
+        elif (rep["fit_seen"] and rep["free_mib"] is not None
+                and n is not None and total and n < total):
+            why = "memory fit: saw {} MiB free, gave {}/{} layers".format(
+                rep["free_mib"], n, total)
+        elif rep["init_fail"]:
+            why = rep["init_fail"]
+        else:
+            why = "unknown: the engine log does not say why"
+    why = "WHY: " + why
+    if len(why) > WIDTH:
+        why = why[:WIDTH - 3] + "..."
+    return why
+
+
 # --------------------------------------------------------------- diagnosis
 
 def diagnose(cold, rep, mode):
-    """Returns (state, paragraph). State drives the exit code. The
-    paragraph budget is about 160 characters: the whole block must stay
-    inside 15 lines."""
+    """Returns (state, paragraph). State drives the exit code. The block
+    must stay inside 15 lines, which sets two paragraph budgets: about
+    160 characters (3 wrapped lines) for the states that carry no WHY
+    line, about 95 (2 wrapped lines) for the three degraded states that
+    do. Layer counts live in the gpu evidence line, not repeated here."""
     decode = rep["decode_toks"] or cold["decode_toks"]
     prefill = rep["prefill_toks"] or cold["prefill_toks"]
     wait_s = 2500.0 / prefill if prefill else None
+
+    def fallback_para():
+        bits = []
+        if decode:
+            bits.append("Decode ({:.1f}) looks passable; that is how "
+                        "this hides.".format(decode))
+        if prefill:
+            bits.append("Prefill: {:.0f} s per 2500 token "
+                        "prompt.".format(wait_s))
+        return " ".join(bits) or "The gpu line above is the story."
 
     if mode == "ollama":
         frac = rep["vram_frac"]
@@ -470,29 +567,19 @@ def diagnose(cold, rep, mode):
                 "placement is not."
             )
         if frac < 0.05:
-            para = "Ollama reports 0% of weights in GPU memory."
-            if decode:
-                para += (" Decode ({:.1f} tok/s) may look passable, which "
-                         "is how this hides.".format(decode))
-            if prefill:
-                para += (" Prefill at {:.0f} tok/s parks a 2500 token "
-                         "prompt {:.0f} s out.".format(prefill, wait_s))
-            return "SILENT CPU FALLBACK", para
+            return "SILENT CPU FALLBACK", fallback_para()
         if frac < 0.95:
             return "PARTIAL OFFLOAD", (
-                "Ollama reports {:.0f}% of weights in GPU memory, the rest "
-                "on CPU, usually a memory fit call. Expect rates below a "
-                "fully offloaded model.".format(frac * 100)
+                "The {:.0f}% on CPU sets the pace; expect rates below a "
+                "fully offloaded run.".format(100 - frac * 100)
             )
         # ollama's reported split has been known to disagree with where
         # the kernels actually ran, so a full-GPU claim is cross checked
         # against the speed signature before it earns HEALTHY.
         if prefill and decode and prefill < 5 * decode:
             return "CONFLICTING EVIDENCE", (
-                "Ollama says 100% GPU, but prefill at {:.0f} tok/s is "
-                "only {:.1f}x decode, a CPU shaped ratio. Believe neither "
-                "signal: check the ollama server log.".format(
-                    prefill, prefill / decode)
+                "Ollama says 100% GPU; prefill at only {:.1f}x decode "
+                "is CPU shaped. Believe neither.".format(prefill / decode)
             )
         para = "Ollama reports 100% of weights in GPU memory."
         if decode:
@@ -511,19 +598,11 @@ def diagnose(cold, rep, mode):
             "not. A newer llama.cpp build logs it."
         )
     if n == 0:
-        para = "0 of {} layers reached the GPU.".format(total)
-        if decode:
-            para += (" Decode ({:.1f}) looks passable, which is how this "
-                     "hides.".format(decode))
-        if prefill:
-            para += (" Prefill at {:.0f} tok/s parks a 2500 token prompt "
-                     "{:.0f} s out. Check -ngl.".format(prefill, wait_s))
-        return "SILENT CPU FALLBACK", para
+        return "SILENT CPU FALLBACK", fallback_para()
     if total and n < total:
         return "PARTIAL OFFLOAD", (
-            "{} of {} layers fit on the GPU, the rest run on CPU, usually "
-            "a memory fit call. Expect rates below a fully offloaded "
-            "model.".format(n, total)
+            "The {} layers left on CPU set the pace; expect rates below "
+            "a fully offloaded run.".format(total - n)
         )
     para = "The GPU did the work."
     if decode:
@@ -624,7 +703,7 @@ def colorize(text):
                 if word in line:
                     line = line.replace(word, BOLD + col + word + RESET, 1)
                     break
-        elif line.startswith("-- picchio") or (
+        elif line.startswith(("WHY: ", "-- picchio")) or (
                 "prefill" in line and "wallclock" in line
                 and "tok/s" not in line):
             line = DIM + line + RESET
@@ -663,7 +742,7 @@ def gpu_line(rep, mode):
 
 
 def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
-                   explain_part=None, cold_note=None):
+                   explain_part=None, cold_note=None, why=None):
     """The block stays inside 15 lines, kept narrow so it survives
     pasting into a forum comment (a long model name can push line one
     wider). The budget is a feature; never add lines without removing."""
@@ -708,8 +787,18 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
         out.append(bar_line("prefill", prefill_s, prefill_s / wall))
         out.append(bar_line("decode", decode_s, decode_s / wall))
         out.append(bar_line("engine misc", other_s, other_s / wall))
-    out.extend(textwrap.wrap("VERDICT: {}. {}".format(state, para),
-                             width=WIDTH - 2, subsequent_indent="  "))
+    vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
+                           width=WIDTH - 2, subsequent_indent="  ")
+    while why and len(vlines) > 2 and ". " in para.rstrip()[:-1]:
+        # a WHY line leaves the verdict two wrapped lines inside the 15
+        # line budget; the budget outranks the paragraph's last sentence,
+        # so trailing sentences drop until the wrap fits
+        para = para[:para.rstrip()[:-1].rfind(". ") + 1]
+        vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
+                               width=WIDTH - 2, subsequent_indent="  ")
+    out.extend(vlines)
+    if why:
+        out.append(why)
     if explain_part:
         out.append("YOUR NUMBER: " + explain_part[0])
         out.extend(wrap_para(explain_part[1]))
@@ -764,11 +853,14 @@ def selftest():
         l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
         cold_note = (l1 is not None and l2 is not None
                      and l1 < 2 * l2 + 500)
-        state, para = diagnose(passes[0], build_rep(passes), mode)
+        rep = build_rep(passes)
+        state, para = diagnose(passes[0], rep, mode)
+        why = attribute_why(state, rep, mode,
+                            metas[0].get("extra_args", []))
         got = render_verdict(
             machine_info(), metas[0].get("engine", "?"),
             metas[0].get("model_name", "?"), passes, state, para, mode,
-            None, cold_note).splitlines()
+            None, cold_note, why).splitlines()
         if got[:-1] == want[:-1]:
             rp_ok += 1
         else:
@@ -894,7 +986,8 @@ def main():
                                lp("pass{}.stderr.txt".format(i + 1)))
             keep_log(lp("pass{}.meta.json".format(i + 1)), json.dumps(
                 {"wall_s": p["wall_s"], "engine": engine_str,
-                 "model_name": model_name}, indent=1))
+                 "model_name": model_name, "extra_args": args.extra},
+                indent=1))
             passes.append(p)
     elif not looks_like_tag(args.model):
         sys.exit("picchio: no such file: {}\nRun picchio with no "
@@ -939,6 +1032,7 @@ def main():
 
     rep = build_rep(passes)
     state, para = diagnose(passes[0], rep, mode)
+    why = attribute_why(state, rep, mode, args.extra)
 
     explain_part = None
     rates = {
@@ -951,7 +1045,7 @@ def main():
         explain_part = ("{:.1f} tok/s -> {}".format(args.explain, v), ep)
 
     block = render_verdict(mach, engine_str, model_name, passes, state,
-                           para, mode, explain_part, cold_note)
+                           para, mode, explain_part, cold_note, why)
     print(colorize(block))
 
     save_cache({
@@ -967,8 +1061,8 @@ def main():
         print(json.dumps({"machine": mach, "engine": engine_str,
                           "model": model_name, "mode": mode,
                           "protocol": PROTOCOL, "passes": passes,
-                          "warm_median": rates, "state": state},
-                         indent=1))
+                          "warm_median": rates, "state": state,
+                          "why": why}, indent=1))
 
     codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
              "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,

@@ -9,7 +9,7 @@ where the cold pass went (47.9 s, 4/10 threads, weights cached)
   prefill        31.4 s  ##################..........   65%
   decode         13.7 s  ########....................   29%
   engine misc     0.9 s  #...........................    2%
-VERDICT: SILENT CPU FALLBACK. 0 of 33 layers reached the GPU.
-  Decode (11.2) looks passable, which is how this hides. Prefill
-  at 26 tok/s parks a 2500 token prompt 97 s out. Check -ngl.
+VERDICT: SILENT CPU FALLBACK. Decode (11.2) looks passable; that
+  is how this hides. Prefill: 97 s per 2500 token prompt.
+WHY: forced by flag: --device none -ngl 0
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

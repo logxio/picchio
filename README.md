@@ -14,7 +14,7 @@ you actually get, and did the GPU really do the work?</p>
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#get-it-running">Install</a> · <a href="#the-three-numbers">What it checks</a> · <a href="examples/">Examples</a></p>
+<p><a href="#get-it-running">Install</a> · <a href="#the-three-numbers">What it checks</a> · <a href="#guard-mode-watch-your-own-command">Guard</a> · <a href="examples/">Examples</a></p>
 
 <img src="assets/healthy-verdict.svg" width="600" alt="picchio verdict block in a terminal: GPU ENGAGED 33/33 layers, three lanes reported, verdict HEALTHY">
 
@@ -64,7 +64,7 @@ python3 picchio.py /path/to/model.gguf
 python3 picchio.py qwen3.5:9b
 ```
 
-No pip, no dependencies, no config. One Python file, 1074 lines,
+No pip, no dependencies, no config. One Python file, 1220 lines,
 stdlib only. If you have python3 plus either llama.cpp or ollama, you
 already have everything it needs. It runs your model three times with
 a fixed prompt (the first pass cold, the rest warm), reads the
@@ -236,15 +236,63 @@ because a reported split can itself be wrong, picchio cross checks it
 against the measured rates: when ollama claims full GPU placement but
 the prefill to decode ratio looks CPU shaped, the verdict downgrades
 to CONFLICTING EVIDENCE instead of HEALTHY.
-These two modes are the whole scope; picchio stays one readable file.
+Measurement over llama.cpp, measurement over ollama, and the guard
+mode below: that is the whole scope, and picchio stays one readable
+file.
+
+## Guard mode: watch your own command
+
+The verdict block needs picchio to own the run: its prompt, its
+passes. Guard mode is the inverse. Your command, your flags, your
+server; picchio spawns it, streams its stderr through untouched, and
+speaks only when it knows where the model landed.
+
+```
+python3 picchio.py guard -- llama-server --verbose -m model.gguf
+```
+
+It never kills or signals the wrapped process. The moment the
+engine's own log shows layers landing off the GPU, it prints one
+warning line into the stream, with the same WHY attribution the
+verdict block carries, and when your command exits it leaves a short
+placement summary. Real run on this machine, engine output elided
+down to picchio's own lines (the full stream passes through
+unchanged):
+
+```
+$ python3 picchio.py guard -- llama-completion \
+    -m /tmp/models/Qwen3.5-9B-Q4_K_M.gguf \
+    -p "Say hi." -n 16 --verbose -ngl 0
+[1370 lines of the engine's own stderr stream through]
+picchio guard: NOT ENGAGED: 0/33 layers on GPU (Metal: Apple M5); WHY: forced by flag: -ngl 0
+[472 more engine lines; the run finishes on its own]
+picchio guard: llama-completion exited 0 after 8.6 s
+picchio guard: NOT ENGAGED: 0/33 layers on GPU (Metal: Apple M5); WHY: forced by flag: -ngl 0
+picchio guard: last rates seen: prefill 8.5 tok/s, decode 10.4 tok/s
+```
+
+A healthy load gets the same placement line, just ENGAGED and with no
+WHY attached. Guard exits with the wrapped command's own exit code
+(128 plus the signal number if it died by one): the warning lives on
+stderr, not in the exit code, so putting guard around a server changes
+nothing your scripts depend on.
+
+One caveat, measured on this build (b9430): llama.cpp's default log
+level does not print placement lines, so give your command `--verbose`
+(or `-lv 4`, which is enough on llama-server) for guard to have
+evidence to read. When no placement evidence ever appears, the exit
+summary says exactly that instead of judging.
 
 ## Options
 
 ```
 picchio MODEL [flags] [-- engine args]
+picchio guard [--keep-logs DIR] -- <command...>
 
 MODEL            a .gguf path (llama.cpp) or an ollama model tag;
                  with no arguments, lists runnable models it can find
+guard            wrap your own llama.cpp command: warn on degraded
+                 placement, never kill it, summarize when it exits
 --passes N       measurement passes, first one cold (default 3)
 --explain TOKS   classify a number you saw against the measured lanes
 --keep-logs DIR  save each pass's raw engine output into DIR
@@ -408,6 +456,8 @@ the cost of runtime (`--passes 5`).
 
 Exit codes, for scripting: 0 healthy or no evidence, 2 could not run,
 3 partial offload, 4 silent CPU fallback, 5 conflicting evidence.
+Guard mode is the exception: it passes the wrapped command's own exit
+code through untouched.
 
 ## License
 

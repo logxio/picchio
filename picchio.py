@@ -24,6 +24,9 @@
 #   python3 picchio.py guard -- llama-server --verbose -m model.gguf
 #                                       (watch your own command; warn on
 #                                        degraded placement, never kill)
+#   python3 picchio.py compare mine.txt theirs.txt
+#                                       (diff two pasted verdict blocks,
+#                                        name the variable that did it)
 #
 # Needs: python3 (any recent one), plus llama.cpp on PATH or a local ollama.
 # Nothing else. No pip.
@@ -494,6 +497,21 @@ def placement_flags(argv):
     return out
 
 
+def effective_ctx(extra):
+    """The ctx the engine actually got: the protocol default unless the
+    passthrough args override it (llama.cpp honors the last -c given;
+    picchio's own -c comes first on the command line)."""
+    ctx = CTX
+    for i, tok in enumerate(extra):
+        if tok.startswith(("-c=", "--ctx-size=")):
+            tok, val = tok.split("=", 1)
+        else:
+            val = extra[i + 1] if i + 1 < len(extra) else ""
+        if tok in ("-c", "--ctx-size") and val.isdigit():
+            ctx = int(val)
+    return ctx
+
+
 def attribute_why(state, rep, mode, engine_argv):
     """One WHY line for a degraded verdict, None otherwise. Climbs a
     fixed evidence ladder and stops at the first rung with real evidence
@@ -745,7 +763,8 @@ def gpu_line(rep, mode):
 
 
 def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
-                   explain_part=None, cold_note=None, why=None):
+                   explain_part=None, cold_note=None, why=None,
+                   ctx=CTX, extra=()):
     """The block stays inside 15 lines, kept narrow so it survives
     pasting into a forum comment (a long model name can push line one
     wider). The budget is a feature; never add lines without removing."""
@@ -759,9 +778,22 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
         bits.append(rep["model_size"])
     bits.append(engine_str)
     out.append("model    " + ", ".join(bits))
-    out.append("gpu      " + gpu_line(rep, mode))
-    out.append("           {:>13}  {:>13}  {:>13}".format(
-        "prefill", "decode", "wallclock"))
+    gline = "gpu      " + gpu_line(rep, mode)
+    if extra:
+        # passthrough args (the -ngl asked for, sampling overrides) ride
+        # the gpu line: asked-for belongs next to delivered, and a new
+        # line would break the budget. Truncated if long, never dropped:
+        # on a new-format block, no bracket must mean no extra args.
+        astr = " ".join(extra)
+        room = WIDTH - len(gline) - 3
+        if len(astr) > room:
+            astr = astr[:max(2, room) - 2] + ".."
+        gline += " [" + astr + "]"
+    out.append(gline)
+    # ctx rides the dead gutter before the lane headers: the only
+    # always-blank columns in the block ("ctx 9999999" just fits 11)
+    out.append("{:<11}{:>13}  {:>13}  {:>13}".format(
+        "ctx " + str(ctx), "prefill", "decode", "wallclock"))
     out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
         "cold", fmt_rate(cold["prefill_toks"]), fmt_rate(cold["decode_toks"]),
         fmt_rate(cold["wallclock_toks"])))
@@ -942,6 +974,193 @@ def guard_cli(argv):
     guard(argv[1:], keep)
 
 
+# ----------------------------------------------------------------- compare
+
+RE_QUANT = re.compile(r"\b(I?Q\d+(?:_[A-Z0-9]+)+|F16|BF16|F32)\b", re.I)
+
+
+def parse_block(text):
+    """Reads a pasted verdict block back into its variables. The input
+    is a forum comment, so junk around the block is ignored. Fields the
+    block does not carry stay None and print as unknown, never guessed;
+    blocks from before the fingerprint fields have no ctx line, which
+    is also how the two formats are told apart."""
+    b = {k: None for k in ("model", "quant", "engine", "place", "frac",
+                           "args", "ctx", "threads", "chip", "ram", "os")}
+    rates = {}
+    for line in text.splitlines():
+        line = line.rstrip()
+        m = re.match(r"model\s{4}(\S.*)", line)
+        if m and b["model"] is None:
+            b["model"] = m.group(1).split(",")[0].strip()
+            em = re.search(r"((?:llama\.cpp|ollama)\s+\S+)$", m.group(1))
+            b["engine"] = em.group(1) if em else None
+            qm = RE_QUANT.search(m.group(1))
+            b["quant"] = qm.group(1).upper() if qm else None
+        m = re.match(r"gpu\s{6}(\S.*)", line)
+        if m and b["place"] is None:
+            g = m.group(1)
+            am = re.search(r" \[(.+)\]$", g)
+            if am:
+                b["args"], g = am.group(1), g[:am.start()]
+            lm = re.search(r"(\d+)/(\d+) layers", g)
+            pm = re.search(r"(\d+)% of weights", g)
+            if lm and int(lm.group(2)):
+                b["frac"] = int(lm.group(1)) / int(lm.group(2))
+                b["place"] = "{}/{} layers on GPU".format(*lm.groups())
+            elif pm:
+                b["frac"] = int(pm.group(1)) / 100.0
+                b["place"] = "{}% of weights on GPU".format(pm.group(1))
+            else:
+                b["place"] = g.split("(")[0].strip()
+        m = re.match(r"ctx (\d+)\s+prefill", line)
+        if m:
+            b["ctx"] = int(m.group(1))
+        m = re.match(r"\s{2}(cold|warm mid)\s{2,}(\S.*)", line)
+        if m and m.group(1) not in rates:
+            cells = re.findall(r"([\d.]+) tok/s|n/a", m.group(2))
+            if len(cells) == 3:
+                rates[m.group(1)] = [float(c) if c else None for c in cells]
+        if line.startswith("where the cold pass went"):
+            tm = re.search(r"(\d+/\d+) threads", line)
+            if tm:
+                b["threads"] = tm.group(1)
+        m = re.match(r"-- picchio v\S+ \S+ on (.+), (\d+|\?) GB, (.+)", line)
+        if m:
+            b["chip"], b["ram"], b["os"] = m.groups()
+    b["row"] = "warm mid" if "warm mid" in rates else \
+        ("cold" if "cold" in rates else None)
+    b["rates"] = rates.get(b["row"]) or [None] * 3
+    return b if b["model"] and b["row"] else None
+
+
+def base_model(b):
+    """Model name normalized for identity: quant token, .gguf suffix and
+    separators dropped, so Qwen3.5-9B-Q4_K_M.gguf and qwen3.5:9b read as
+    the same weights. Registry tags also drop suffixes like -Instruct,
+    so containment counts as a match; that rule is mechanical, not fuzzy."""
+    s = re.sub(r"\.gguf$", "", b["model"], flags=re.I)
+    return re.sub(r"[^a-z0-9]", "", RE_QUANT.sub("", s).lower())
+
+
+def suspect_para(a, b):
+    """The attribution ladder, mechanical and in fixed order: placement,
+    then quantization, then a ctx an order of magnitude apart, then
+    hardware. The first rung whose evidence differs takes the blame and
+    the climb stops; a rung missing its evidence on either side is
+    skipped and named, never guessed across. Returns (text, skipped)."""
+    skipped = []
+
+    def known(key):
+        if a[key] is not None and b[key] is not None:
+            return True
+        skipped.append({"frac": "placement"}.get(key, key))
+        return False
+
+    ma, mb = base_model(a), base_model(b)
+    if not (ma == mb or ma in mb or mb in ma):
+        text = ("NOT COMPARABLE: different models ({} vs {}). The ladder "
+                "ranks configuration, not models.".format(a["model"],
+                                                          b["model"]))
+    elif known("frac") and abs(a["frac"] - b["frac"]) > 0.02:
+        text = ("SUSPECT: placement. A ran {}, B ran {}. Fix that first; "
+                "nothing else gets blamed while the first rung "
+                "differs.".format(a["place"], b["place"]))
+    elif known("quant") and a["quant"] != b["quant"]:
+        text = ("SUSPECT: quantization. Placement agrees, the weights do "
+                "not ({} vs {}): different bytes per token, so the rates "
+                "are not one series.".format(a["quant"], b["quant"]))
+    elif known("ctx") and max(a["ctx"], b["ctx"]) >= 10 * min(a["ctx"],
+                                                              b["ctx"]):
+        text = ("SUSPECT: context size. Placement and quant agree; ctx "
+                "{} against {} is an order of magnitude, and the KV "
+                "cache scales with it.".format(a["ctx"], b["ctx"]))
+    elif a["chip"] and b["chip"] and (a["chip"] != b["chip"]
+                                      or a["ram"] != b["ram"]):
+        text = ("SUSPECT: hardware. Every config variable both blocks "
+                "carry agrees; the machines differ ({}, {} GB vs {}, {} "
+                "GB). What is left is silicon, mostly memory bandwidth; "
+                "a block cannot rank that.".format(
+                    a["chip"], a["ram"], b["chip"], b["ram"]))
+    else:
+        if not (a["chip"] and b["chip"]):
+            skipped.append("machine")
+        text = ("NO SUSPECT: every variable both blocks carry agrees. "
+                "What remains (background load, thermals, power mode, "
+                "disk cache) does not print in a block; picchio will "
+                "not guess.")
+    minor = [k for k in ("engine", "threads", "os")
+             if a[k] and b[k] and a[k] != b[k]]
+    if minor and text.startswith(("SUSPECT: hardware", "NO SUSPECT")):
+        text += (" Outside the ladder these differ too: "
+                 + ", ".join(minor) + ".")
+    return text, skipped
+
+
+def render_compare(names, a, b):
+    def cell(v):
+        s = "unknown" if v is None else str(v)
+        return s if len(s) <= 24 else s[:22] + ".."
+
+    a, b = dict(a), dict(b)
+    for x in (a, b):
+        # a new-format block (it has a ctx line) with no bracket really
+        # ran without extra args; an old block just cannot say
+        x["args"] = x["args"] or ("none" if x["ctx"] else None)
+        x["machine"] = "{}, {} GB".format(x["chip"], x["ram"]) \
+            if x["chip"] else None
+    rows = [(k, a[k], b[k]) for k in
+            ("model", "quant", "engine", "place", "args", "ctx",
+             "threads", "machine", "os")]
+    if all(va == vb for _, va, vb in rows) and a["rates"] == b["rates"]:
+        return ("picchio compare: A and B carry the same fingerprint "
+                "and the same rates. Nothing to compare.")
+    out = ["picchio compare", "A: " + names[0], "B: " + names[1], "",
+           "{:<11}{:<26}{}".format("", "A", "B")]
+    for label, va, vb in rows:
+        same = va == vb and va is not None
+        out.append("{:<11}{:<26}{}".format(
+            label, cell(va), "same" if same else cell(vb)))
+    note = a["row"] if a["row"] == b["row"] else \
+        "A {}, B {}".format(a["row"], b["row"])
+    out += ["", "rates ({}), tok/s:".format(note)]
+    for i, lane in enumerate(("prefill", "decode", "wallclock")):
+        va, vb = a["rates"][i], b["rates"][i]
+        gap = "-"
+        if va and vb:
+            gap = "A {:.1f}x faster".format(va / vb) if va >= vb else \
+                "B {:.1f}x faster".format(vb / va)
+        out.append("  {:<11}{:>10}  {:>10}   {}".format(
+            lane, "{:.1f}".format(va) if va else "n/a",
+            "{:.1f}".format(vb) if vb else "n/a", gap))
+    text, skipped = suspect_para(a, b)
+    out += [""] + textwrap.wrap(text, width=WIDTH, subsequent_indent="  ")
+    if skipped:
+        out += textwrap.wrap("not judged, missing from one block: "
+                             + ", ".join(skipped), width=WIDTH,
+                             subsequent_indent="  ")
+    return "\n".join(out)
+
+
+def compare_cli(argv):
+    if argv[:1] in (["-h"], ["--help"]) or len(argv) != 2:
+        sys.exit("picchio compare: usage: picchio.py compare A.txt B.txt\n"
+                 "each file holds one pasted verdict block (surrounding "
+                 "forum text is fine)")
+    blocks = []
+    for path in argv:
+        try:
+            with open(path, errors="replace") as f:
+                blk = parse_block(f.read())
+        except OSError as e:
+            sys.exit("picchio compare: {}".format(e))
+        if blk is None:
+            sys.exit("picchio compare: no verdict block in {} (need at "
+                     "least the model line and a rates row)".format(path))
+        blocks.append(blk)
+    print(render_compare(argv, blocks[0], blocks[1]))
+
+
 # ---------------------------------------------------------------- selftest
 
 def selftest():
@@ -990,12 +1209,12 @@ def selftest():
                      and l1 < 2 * l2 + 500)
         rep = build_rep(passes)
         state, para = diagnose(passes[0], rep, mode)
-        why = attribute_why(state, rep, mode,
-                            metas[0].get("extra_args", []))
+        extra = metas[0].get("extra_args", [])
+        why = attribute_why(state, rep, mode, extra)
         got = render_verdict(
             machine_info(), metas[0].get("engine", "?"),
             metas[0].get("model_name", "?"), passes, state, para, mode,
-            None, cold_note, why).splitlines()
+            None, cold_note, why, effective_ctx(extra), extra).splitlines()
         if got[:-1] == want[:-1]:
             rp_ok += 1
         else:
@@ -1004,9 +1223,34 @@ def selftest():
                     print("  {} mismatch:\n    want: {}\n    got:  {}".format(
                         name, a, b))
                     break
-    print("parser fixtures {}/{}, verdict replay {}/{}".format(
-        fx_ok, fx_all, rp_ok, rp_all))
-    sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all else 1)
+    # compare: the two committed llama.cpp blocks are a natural pair
+    cp_ok, cp_all = 0, 4
+    ha = open(os.path.join(here, "examples", "healthy-metal.txt")).read()
+    fb = open(os.path.join(here, "examples", "cpu-fallback.txt")).read()
+    pa = parse_block("someone posted this:\n" + ha + "\nhope it helps")
+    pb = parse_block(fb)
+    if pa and pb and pa["ctx"] == CTX \
+            and pb["args"] == "--device none -ngl 0":
+        cp_ok += 1
+    two = render_compare(("A", "B"), pa, pb)
+    if "SUSPECT: placement" in two and "0/33" in two:
+        cp_ok += 1
+    if "Nothing to compare" in render_compare(("A", "A"), pa,
+                                              parse_block(ha)):
+        cp_ok += 1
+    # old format: strip the two fingerprint fields and the committed
+    # block is byte for byte the pre-fingerprint output (they are the
+    # only format change since); it must parse as unknown, not a guess
+    old = re.sub(r"(?m)^(ctx \d+)", lambda m: " " * len(m.group(1)), fb)
+    po = parse_block(re.sub(r"(?m)^(gpu\s{6}.*) \[.*\]$", r"\1", old))
+    if po and po["ctx"] is None and po["args"] is None \
+            and po["frac"] == 0.0 \
+            and "unknown" in render_compare(("A", "B"), pa, po):
+        cp_ok += 1
+    print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}"
+          .format(fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all))
+    sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
+             and cp_ok == cp_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -1034,6 +1278,9 @@ def main():
     if sys.argv[1:2] == ["guard"]:
         guard_cli(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["compare"]:
+        compare_cli(sys.argv[2:])
+        return
     ap = argparse.ArgumentParser(
         prog="picchio",
         description="Knocks on your local LLM setup and listens for hollow "
@@ -1057,6 +1304,11 @@ def main():
             "  wrap your own llama.cpp command (llama-server, llama-cli);\n"
             "  warn the moment placement evidence shows layers off the\n"
             "  GPU, never kill it, summarize placement when it exits\n"
+            "\n"
+            "compare mode:\n"
+            "  picchio.py compare A.txt B.txt\n"
+            "  diff two pasted verdict blocks variable by variable and\n"
+            "  name the first config difference that explains the gap\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1191,7 +1443,8 @@ def main():
         explain_part = ("{:.1f} tok/s -> {}".format(args.explain, v), ep)
 
     block = render_verdict(mach, engine_str, model_name, passes, state,
-                           para, mode, explain_part, cold_note, why)
+                           para, mode, explain_part, cold_note, why,
+                           effective_ctx(args.extra), args.extra)
     print(colorize(block))
 
     save_cache({

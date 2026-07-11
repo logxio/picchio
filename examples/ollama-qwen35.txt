@@ -1,6 +1,6 @@
 model    qwen3.5:9b, 9.0 B, Q4_K_M, 5.55 GiB, ollama 0.31.1
 gpu      ENGAGED: 100% of weights in GPU memory (ollama ps)
-                 prefill         decode      wallclock
+ctx 4096         prefill         decode      wallclock
   cold       539.2 tok/s     19.3 tok/s     12.2 tok/s
   warm mid   853.5 tok/s     19.9 tok/s     17.1 tok/s
   warm span      847~860      19.5~20.4      16.8~17.4

@@ -49,16 +49,25 @@ VERDICT: HEALTHY. The GPU did the work. Quote the warm median
 
 ```
 curl -LO https://raw.githubusercontent.com/snxoi/picchio/main/picchio.py
-python3 picchio.py /path/to/model.gguf     # llama.cpp, full diagnosis
-python3 picchio.py qwen3.5:9b              # ollama tag, measurement mode
+python3 picchio.py
 ```
 
-No pip, no dependencies, no config. One Python file, 904 lines,
-stdlib only. If
-you have python3 plus either llama.cpp or ollama, you already have
-everything it needs. It runs your model three times with a fixed
-prompt (the first pass cold, the rest warm), reads the engine's own
-numbers, and prints the verdict block above.
+That second line, with no arguments, looks around your machine
+(ollama tags, the current folder, the HF and LM Studio caches) and
+prints commands you can copy as they are. Or point it at a model
+yourself: a .gguf path runs the full llama.cpp diagnosis, an ollama
+tag runs measurement mode.
+
+```
+python3 picchio.py /path/to/model.gguf
+python3 picchio.py qwen3.5:9b
+```
+
+No pip, no dependencies, no config. One Python file, 980 lines,
+stdlib only. If you have python3 plus either llama.cpp or ollama, you
+already have everything it needs. It runs your model three times with
+a fixed prompt (the first pass cold, the rest warm), reads the
+engine's own numbers, and prints the verdict block above.
 
 Cost of a run: three passes, about a minute on this machine with the
 GPU engaged, a few minutes on CPU. Read heavy; it reads your model file,
@@ -224,7 +233,8 @@ These two modes are the whole scope; picchio stays one readable file.
 ```
 picchio MODEL [flags] [-- engine args]
 
-MODEL            a .gguf path (llama.cpp) or an ollama model tag
+MODEL            a .gguf path (llama.cpp) or an ollama model tag;
+                 with no arguments, lists runnable models it can find
 --passes N       measurement passes, first one cold (default 3)
 --explain TOKS   classify a number you saw against the measured lanes
 --keep-logs DIR  save each pass's raw engine output into DIR

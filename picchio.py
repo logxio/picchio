@@ -30,12 +30,16 @@
 #   python3 picchio.py compare mine.txt theirs.txt
 #                                       (diff two pasted verdict blocks,
 #                                        name the variable that did it)
+#   python3 picchio.py verify block.txt
+#                                       (re-derive a pasted block's own
+#                                        physics; flag it if it lies)
 #
 # Needs: python3 (any recent one), plus llama.cpp on PATH or a local ollama.
 # Nothing else. No pip.
 #
 # Exit codes: 0 ok/healthy, 2 could not run, 3 partial offload,
 #             4 silent cpu fallback, 5 conflicting evidence.
+#             verify: 0 self-consistent, 5 flagged, 2 unreadable.
 
 import argparse
 import ctypes
@@ -1364,7 +1368,9 @@ def parse_block(text):
     blocks from before the fingerprint fields have no ctx line, which
     is also how the two formats are told apart."""
     b = {k: None for k in ("model", "quant", "engine", "place", "frac",
-                           "args", "ctx", "threads", "chip", "ram", "os")}
+                           "args", "ctx", "threads", "chip", "ram", "os",
+                           "place_word", "verdict", "os_raw", "os_work",
+                           "os_idle", "os_mem", "os_watts", "os_note")}
     rates = {}
     for line in text.splitlines():
         line = line.rstrip()
@@ -1381,6 +1387,11 @@ def parse_block(text):
             am = re.search(r" \[(.+)\]$", g)
             if am:
                 b["args"], g = am.group(1), g[:am.start()]
+            for w in ("NOT ENGAGED", "PARTIAL", "ENGAGED",
+                      "NO EVIDENCE", "EVIDENCE UNKNOWN"):
+                if g.startswith(w):  # NOT ENGAGED before ENGAGED (substring)
+                    b["place_word"] = w
+                    break
             lm = re.search(r"(\d+)/(\d+) layers", g)
             pm = re.search(r"(\d+)% of weights", g)
             if lm and int(lm.group(2)):
@@ -1403,6 +1414,34 @@ def parse_block(text):
             tm = re.search(r"(\d+/\d+) threads", line)
             if tm:
                 b["threads"] = tm.group(1)
+        m = re.match(r"os\s{2,}(gpu .*)", line)
+        if m and b["os_raw"] is None:
+            g = b["os_raw"] = m.group(1)
+            if "not judged" in g:
+                b["os_note"] = "not judged"
+            elif "not sampled" in g:
+                b["os_note"] = "not sampled"
+            elif "nothing usable" in g:
+                b["os_note"] = "unusable"
+            for key, rx in (("os_idle", r"idle (\d+)%"),
+                            ("os_work", r"work (\d+)%")):
+                mm = re.search(rx, g)
+                if mm:
+                    b[key] = int(mm.group(1))
+            mm = re.search(r"mem \+([\d.]+) GiB", g)
+            if mm:
+                b["os_mem"] = float(mm.group(1))
+            mm = re.search(r"([\d.]+) W\b", g)
+            if mm:
+                b["os_watts"] = float(mm.group(1))
+        m = re.match(r"VERDICT: (\S.*)", line)
+        if m and b["verdict"] is None:
+            for st in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
+                       "NO PLACEMENT EVIDENCE", "CONFLICTING EVIDENCE",
+                       "HEALTHY"):
+                if m.group(1).startswith(st):
+                    b["verdict"] = st
+                    break
         m = re.match(r"-- picchio v\S+ \S+ on (.+), (\d+|\?) GB, (.+)", line)
         if m:
             b["chip"], b["ram"], b["os"] = m.groups()
@@ -1537,6 +1576,145 @@ def compare_cli(argv):
                      "least the model line and a rates row)".format(path))
         blocks.append(blk)
     print(render_compare(argv, blocks[0], blocks[1]))
+
+
+# ------------------------------------------------------------------ verify
+
+def claim_shape(b):
+    """Where a parsed block claims the work ran, from placement alone:
+    'gpu', 'cpu', 'partial', or None when it reports no evidence."""
+    if b["place_word"] in ("NO EVIDENCE", "EVIDENCE UNKNOWN"):
+        return None
+    frac = b["frac"]
+    if b["place_word"] == "ENGAGED" or (frac is not None and frac >= 0.95):
+        return "gpu"
+    if b["place_word"] == "NOT ENGAGED" or (frac is not None and frac < 0.05):
+        return "cpu"
+    if b["place_word"] == "PARTIAL" or frac is not None:
+        return "partial"
+    return None
+
+
+def verify_block(b):
+    """Recomputes the physics a verdict block claims and checks the block
+    agrees with itself. Every number in it is a shadow of one run:
+    placement, the prefill/decode signature, the os meter and the
+    headline each answer 'did the gpu do the work', and an honest block
+    has all of them describing the same run. Returns (verdict, findings):
+    PASS with no findings, or FLAG naming each physical contradiction.
+
+    It cannot prove a block is real, since numbers can be faked so they
+    agree; it proves only that a block contradicts itself, which is what
+    fabrication and casual tampering almost always leave behind."""
+    pf, dc, wc = b["rates"]
+    claim = claim_shape(b)
+    ratio = pf / dc if pf and dc else None
+    f = []
+    # 1. lane ordering is pure physics, hardware independent: prefill
+    #    reads the whole prompt in one batched pass, decode writes one
+    #    token at a time reading every weight each time, and wallclock
+    #    spreads the generated tokens over load and prefill as well. On a
+    #    single run prefill > decode > wallclock always holds; an
+    #    inversion is a number that was typed, not measured.
+    if pf and dc and dc >= pf:
+        f.append("decode {:.1f} >= prefill {:.1f} tok/s: generation cannot "
+                 "outrun prompt reading on one run".format(dc, pf))
+    if dc and wc and wc >= dc:
+        f.append("wallclock {:.1f} >= decode {:.1f} tok/s: wall time "
+                 "includes load and prefill, it cannot be faster".format(
+                     wc, dc))
+    # 2. the prefill/decode ratio is a scale free signature of placement:
+    #    a full-gpu run measures 20-44x on the calibrated machines, a cpu
+    #    run 2-5x. A ratio that fights the placement claim is the
+    #    ollama-ps-lies case (#7323 family), now caught in a static paste.
+    if ratio is not None and claim == "gpu" and ratio < 5:
+        f.append("claims full gpu but prefill is only {:.1f}x decode, a cpu "
+                 "shaped ratio (a real gpu run is 20x+)".format(ratio))
+    if ratio is not None and claim == "cpu" and ratio >= 15:
+        f.append("claims no gpu but prefill is {:.1f}x decode, a gpu shaped "
+                 "ratio a cpu run never reaches".format(ratio))
+    # 3. the os meter is an independent witness, held against the claim
+    #    only when it was sampled and the machine was idle enough to read;
+    #    a block whose own os line already abstained is not judged on it
+    if b["os_work"] is not None and b["os_note"] is None:
+        if claim == "gpu" and b["os_work"] < 15:
+            f.append("claims full gpu but its own os line saw the gpu at "
+                     "{}% while the tokens were made".format(b["os_work"]))
+        if claim == "cpu" and b["os_work"] >= 50:
+            f.append("claims no gpu but its own os line saw the gpu busy at "
+                     "{}% while the tokens were made".format(b["os_work"]))
+    # 4. the headline must match the block's own placement line; a
+    #    consistent body under a lying VERDICT word is the cheapest forgery
+    if b["verdict"] == "HEALTHY" and claim in ("cpu", "partial"):
+        f.append("headline says HEALTHY but the placement line says "
+                 "{}".format(b["place_word"] or "not full gpu"))
+    if b["verdict"] == "SILENT CPU FALLBACK" and claim == "gpu":
+        f.append("headline says CPU FALLBACK but the placement line claims "
+                 "the full gpu")
+    return ("FLAG" if f else "PASS"), f
+
+
+def render_verify(src, b, verdict, flags):
+    pf, dc, wc = b["rates"]
+    claim = claim_shape(b)
+    shape = {"gpu": "full gpu", "cpu": "no gpu", "partial": "partial",
+             None: "no placement evidence"}[claim]
+    out = ["picchio verify: " + src,
+           "  model     " + (b["model"] or "unknown"),
+           "  claim     {} ({}), headline {}".format(
+               b["place_word"] or "?", shape, b["verdict"] or "none")]
+    if pf and dc:
+        out.append("  signature prefill {:.1f} = {:.1f}x decode {:.1f}, "
+                   "wallclock {}".format(
+                       pf, pf / dc, dc,
+                       "{:.1f}".format(wc) if wc else "n/a"))
+    if b["os_raw"]:
+        out.append("  os        " + b["os_raw"])
+    if verdict == "PASS":
+        witnessed = b["os_work"] is not None and b["os_note"] is None
+        out.append("VERDICT: PASS. placement, the timing signature"
+                   + (" and the os meter" if witnessed else "")
+                   + " all describe the same run.")
+    else:
+        out.append("VERDICT: FLAG. {} physical contradiction{} in this "
+                   "block:".format(len(flags),
+                                   "" if len(flags) == 1 else "s"))
+        for fl in flags:
+            out.extend(textwrap.wrap(fl, width=WIDTH, initial_indent="  - ",
+                                     subsequent_indent="    "))
+        out.append("This block contradicts itself; do not trust its numbers "
+                   "as one run.")
+    return "\n".join(out)
+
+
+def verify_cli(argv):
+    if argv[:1] in (["-h"], ["--help"]):
+        print("usage: picchio.py verify [FILE]\n"
+              "re-derive the physics a pasted verdict block claims, and\n"
+              "flag it when placement, the prefill/decode signature, the\n"
+              "os meter and the headline do not describe the same run.\n"
+              "reads the block from FILE, or from stdin when none is given.")
+        sys.exit(0)
+    src = argv[0] if argv and argv[0] != "-" else None
+    if src:
+        try:
+            text = open(src, errors="replace").read()
+        except OSError as e:
+            sys.exit("picchio verify: {}".format(e))
+    else:
+        text = sys.stdin.read()
+        src = "pasted block"
+    b = parse_block(text)
+    if b is None:
+        sys.stderr.write("picchio verify: no verdict block found in {} (need "
+                         "the model line and a rates row).\n".format(src))
+        sys.exit(2)
+    verdict, flags = verify_block(b)
+    print(render_verify(src, b, verdict, flags))
+    # reuse the measure exit map: a self-consistent block is 0, a block
+    # whose sources fight is CONFLICTING EVIDENCE (5), the same code a
+    # live run gets when two sources disagree
+    sys.exit(0 if verdict == "PASS" else 5)
 
 
 # ---------------------------------------------------------------- selftest
@@ -1686,11 +1864,37 @@ def selftest():
     if st == "CONFLICTING EVIDENCE" and "CPU shaped" in para \
             and attribute_why(st, slow, "llama.cpp", []) is None:
         te_ok += 1
+    # verify: the two committed blocks pass, and blocks tampered by one
+    # edit fail. Fixtures are built in memory from the real examples, so
+    # no forged block ships in the repo; ha and fb are read above.
+    ve_ok, ve_all = 0, 4
+    if verify_block(parse_block(ha))[0] == "PASS":
+        ve_ok += 1
+    if verify_block(parse_block(fb))[0] == "PASS":
+        ve_ok += 1
+    # flip the cpu-fallback block's placement line to claim the full gpu:
+    # one edit, and three independent witnesses (the ratio, the os meter,
+    # the headline) each catch the run's real cpu shape underneath
+    forged = re.sub(r"gpu      NOT ENGAGED: 0/33 layers on GPU \[.*\]",
+                    "gpu      ENGAGED: 33/33 layers on GPU (Metal: Apple M5)",
+                    fb)
+    fv, ff = verify_block(parse_block(forged))
+    if fv == "FLAG" and any("cpu shaped" in x for x in ff) and len(ff) >= 3:
+        ve_ok += 1
+    # invert a lane so decode reads faster than prefill: pure physics,
+    # impossible on one run, caught with no hardware knowledge at all
+    inv = re.sub(r"(warm mid\s+)588\.0 tok/s(\s+)21\.1 tok/s",
+                 r"\g<1>15.0 tok/s\g<2>21.1 tok/s", ha)
+    iv, iff = verify_block(parse_block(inv))
+    if iv == "FLAG" and any("outrun" in x for x in iff):
+        ve_ok += 1
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
-          "telemetry {}/{}".format(fx_ok, fx_all, rp_ok, rp_all,
-                                   cp_ok, cp_all, te_ok, te_all))
+          "telemetry {}/{}, verify {}/{}".format(
+              fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all,
+              te_ok, te_all, ve_ok, ve_all))
     sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
-             and cp_ok == cp_all and te_ok == te_all else 1)
+             and cp_ok == cp_all and te_ok == te_all
+             and ve_ok == ve_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -1721,6 +1925,9 @@ def main():
     if sys.argv[1:2] == ["compare"]:
         compare_cli(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["verify"]:
+        verify_cli(sys.argv[2:])
+        return
     ap = argparse.ArgumentParser(
         prog="picchio",
         description="Knocks on your local LLM setup and listens for hollow "
@@ -1749,6 +1956,12 @@ def main():
             "  picchio.py compare A.txt B.txt\n"
             "  diff two pasted verdict blocks variable by variable and\n"
             "  name the first config difference that explains the gap\n"
+            "\n"
+            "verify mode:\n"
+            "  picchio.py verify [FILE]\n"
+            "  re-derive the physics a pasted verdict block claims and\n"
+            "  flag it when placement, the speed signature, the os meter\n"
+            "  and the headline do not describe the same run\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

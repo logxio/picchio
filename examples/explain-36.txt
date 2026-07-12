@@ -1,7 +1,7 @@
 YOUR NUMBER: 36.0 tok/s -> MATCHES NOTHING MEASURED HERE
   36.0 tok/s is not within 30% of anything measured here
-  (closest: decode, off by 1.8x; measured: prefill 558.9, decode
-  20.0, wallclock 14.4 tok/s). Before trusting that number, ask
+  (closest: decode, off by 1.7x; measured: prefill 588.0, decode
+  21.1, wallclock 15.5 tok/s). Before trusting that number, ask
   which of the three rates it was, and on what hardware, quant,
   and context length.
 (rates: Qwen3.5-9B-Q4_K_M.gguf, Apple M5, 32 GB, 2026-07-11)

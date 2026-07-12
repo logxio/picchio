@@ -1,5 +1,5 @@
 {
- "wall_s": 7.345407999993768,
+ "wall_s": 7.129174208006589,
  "engine": "ollama 0.31.1",
  "model_name": "qwen3.5:9b",
  "ps": {
@@ -17,7 +17,7 @@
    "parameter_size": "9.0B",
    "quantization_level": "Q4_K_M"
   },
-  "expires_at": "2026-07-11T05:47:44.986019+09:00",
+  "expires_at": "2026-07-12T09:35:29.59577+09:00",
   "size_vram": 5961437675,
   "context_length": 4096
  }

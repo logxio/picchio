@@ -1,5 +1,5 @@
 {
- "wall_s": 47.91220216700458,
+ "wall_s": 49.92333729201346,
  "engine": "llama.cpp b9430",
  "model_name": "Qwen3.5-9B-Q4_K_M.gguf",
  "extra_args": [

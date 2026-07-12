@@ -1,15 +1,15 @@
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
 gpu      NOT ENGAGED: 0/33 layers on GPU [--device none -ngl 0]
+os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W
 ctx 4096         prefill         decode      wallclock
-  cold        24.3 tok/s      9.3 tok/s      2.7 tok/s
-  warm mid    25.7 tok/s     11.2 tok/s      2.9 tok/s
-  warm span        26~26      11.0~11.4        2.9~2.9
-where the cold pass went (47.9 s, 4/10 threads, weights cached)
-  load weights    2.0 s  #...........................    4%
-  prefill        31.4 s  ##################..........   65%
-  decode         13.7 s  ########....................   29%
-  engine misc     0.9 s  #...........................    2%
-VERDICT: SILENT CPU FALLBACK. Decode (11.2) looks passable; that
-  is how this hides. Prefill: 97 s per 2500 token prompt.
+  cold        22.8 tok/s      9.3 tok/s      2.5 tok/s
+  warm mid    26.8 tok/s     12.2 tok/s      3.0 tok/s
+  warm span        27~27      12.0~12.4        3.0~3.0
+where the cold pass went (49.9 s, 4/10 threads, weights cached)
+  load weights    2.1 s  #...........................    4%
+  prefill        33.4 s  ###################.........   67%
+  decode         13.7 s  ########....................   27%
+  engine misc     0.8 s  ............................    2%
+VERDICT: SILENT CPU FALLBACK. Prefill: 93 s per 2500 tokens.
 WHY: forced by flag: --device none -ngl 0
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

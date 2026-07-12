@@ -905,13 +905,17 @@ def diagnose(cold, rep, mode, tele=None):
     vote = telemetry_vote(tele, rep, mode)
 
     def fallback_para():
+        # prefill leads: with an os line and a WHY line in the block the
+        # budget leaves this paragraph one line, and the hidden cost is
+        # the sentence that must survive (decode's alibi shows in the
+        # table right above)
         bits = []
+        if prefill:
+            bits.append("Prefill: {:.0f} s per 2500 "
+                        "tokens.".format(wait_s))
         if decode:
             bits.append("Decode ({:.1f}) looks passable; that is how "
                         "this hides.".format(decode))
-        if prefill:
-            bits.append("Prefill: {:.0f} s per 2500 token "
-                        "prompt.".format(wait_s))
         return " ".join(bits) or "The gpu line above is the story."
 
     if mode == "ollama":
@@ -926,7 +930,7 @@ def diagnose(cold, rep, mode, tele=None):
             return "SILENT CPU FALLBACK", fallback_para()
         if frac < 0.95:
             return "PARTIAL OFFLOAD", (
-                "The {:.0f}% on CPU sets the pace; expect rates below a "
+                "{:.0f}% of weights sat on CPU; expect rates below a "
                 "fully offloaded run.".format(100 - frac * 100)
             )
         # ollama's reported split has been known to disagree with where
@@ -962,8 +966,8 @@ def diagnose(cold, rep, mode, tele=None):
         return "SILENT CPU FALLBACK", fallback_para()
     if total and n < total:
         return "PARTIAL OFFLOAD", (
-            "The {} layers left on CPU set the pace; expect rates below "
-            "a fully offloaded run.".format(total - n)
+            "{} layers sat on CPU; expect rates below a fully "
+            "offloaded run.".format(total - n)
         )
     # a full offload claim from stderr, cross checked the same way the
     # ollama one is: first the OS meter, then the speed signature
@@ -1199,6 +1203,12 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             para = para[:cut] + "."
         vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
                                width=WIDTH - 2, subsequent_indent="  ")
+    room = max(1, 15 - fixed)
+    if len(vlines) > room:
+        # a single uncuttable sentence can still overflow; the budget
+        # is enforced, not hoped for, so truncate as the last resort
+        vlines = vlines[:room]
+        vlines[-1] = vlines[-1][:WIDTH - 4].rstrip() + ".."
     out.extend(vlines)
     if why:
         out.append(why)

@@ -53,13 +53,16 @@ python3 picchio.py
 ```
 
 That second line, with no arguments, looks around your machine
-(ollama tags, the current folder, the HF and LM Studio caches) and
-prints commands you can copy as they are. Or point it at a model:
+(ollama tags, the current folder, the HF and LM Studio caches). One
+model found, it runs it; several, it lists them and you pick by
+number, path, or tag; none, it asks for a path. It asks once, then
+runs to the block below without stopping. Piped or redirected, it
+prints the commands instead. Or point it at a model yourself:
 a .gguf path (`python3 picchio.py /path/to/model.gguf`) gets the
 full llama.cpp diagnosis, an ollama tag (`python3 picchio.py
 qwen3.5:9b`) gets measurement mode.
 
-No pip, no dependencies, no config. One Python file, 2541 lines,
+No pip, no dependencies, no config. One Python file, 2655 lines,
 stdlib only; python3 plus either llama.cpp or ollama is everything
 it needs. It runs your model three times with a fixed prompt (the
 first pass cold, the rest warm), reads the engine's own numbers
@@ -77,7 +80,8 @@ The parser is pinned by the raw logs in this repo:
 in [examples/raw/](examples/raw/) and must reproduce every committed
 verdict block line for line (9 pass fixtures, 3 blocks, 4 compare
 checks, 5 synthetic telemetry timelines, 4 verify checks, 3 watch
-checks, 2 context-sweep checks); the badge runs it on every push.
+checks, 2 context-sweep checks, 6 onboarding checks); the badge runs
+it on every push.
 
 ## The three numbers
 
@@ -429,7 +433,8 @@ picchio verify [FILE]
 picchio watch [PID] [--engine ollama] [--for SEC]
 
 MODEL            a .gguf path (llama.cpp) or an ollama model tag;
-                 with no arguments, lists runnable models it can find
+                 with no arguments, finds your models and asks
+                 which to run (prints commands when not a terminal)
 guard            wrap your own llama.cpp command: warn on degraded
                  placement, never kill it, summarize when it exits
 compare          diff two saved verdict blocks variable by variable,

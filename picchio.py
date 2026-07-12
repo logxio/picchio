@@ -4,12 +4,15 @@
 # What it does, in one run:
 #   1. runs the same fixed prompt through your model N times (default 3;
 #      the first pass is the cold one, the rest are warm)
-#   2. reads the engine's own timing and placement evidence
+#   2. reads the engine's own timing and placement evidence, and on
+#      macOS also samples the OS's own GPU meter (ioreg) while it runs
 #   3. reports prefill, decode and wallclock tok/s as three separate lanes,
 #      cold pass first, then the warm median and the warm spread
 #   4. tells you whether the GPU actually did the work, or quietly did
-#      not, and on a degraded verdict adds one WHY line naming the cause
-#      it can prove (explicit flag, memory fit, init failure) or unknown
+#      not: the engine's claim, the OS meter and the speed signature
+#      must agree, and any two of them fighting is its own verdict;
+#      on a degraded verdict one WHY line names the cause it can prove
+#      (explicit flag, memory fit, init failure) or says unknown
 #   5. shows where the seconds of the cold pass went (load, prefill, decode)
 #   6. prints a verdict block sized to fit in a forum comment
 #
@@ -35,6 +38,7 @@
 #             4 silent cpu fallback, 5 conflicting evidence.
 
 import argparse
+import ctypes
 import glob
 import json
 import os
@@ -45,6 +49,7 @@ import statistics
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -131,7 +136,7 @@ def blank_pass():
         "eval_ms": None, "eval_tokens": None,
         "offload_n": None, "offload_total": None,
         "gpu_device": None, "gpu_kind": None,
-        "model_params": None, "model_size": None,
+        "model_params": None, "model_size": None, "model_bytes": None,
         "threads": None, "cores": None,
         "vram_frac": None,
         "free_mib": None, "fit_seen": False, "init_fail": None,
@@ -147,6 +152,16 @@ def finish_rates(d):
     if d["eval_tokens"] and d["wall_s"]:
         d["wallclock_toks"] = d["eval_tokens"] / d["wall_s"]
     return d
+
+
+def size_bytes(s):
+    """'5.28 GiB' -> bytes, None when the unit is unfamiliar."""
+    m = re.match(r"([\d.]+)\s*([KMG]i?B|B)", s or "", re.I)
+    if not m:
+        return None
+    mult = {"b": 1, "kib": 1024, "kb": 1000, "mib": 1024 ** 2,
+            "mb": 1000 ** 2, "gib": 1024 ** 3, "gb": 1000 ** 3}
+    return int(float(m.group(1)) * mult[m.group(2).lower()])
 
 
 def keep_log(path, text):
@@ -281,6 +296,7 @@ def parse_stderr(text, wall_s):
         m = re_size.search(line)
         if m:
             d["model_size"] = m.group(1).strip()
+            d["model_bytes"] = size_bytes(d["model_size"])
         if "system_info" in line:
             m = re_threads.search(line)
             if m:
@@ -359,6 +375,7 @@ def map_ollama(resp, wall_s, ps):
         size, vram = ps.get("size"), ps.get("size_vram")
         if size:
             d["model_size"] = "{:.2f} GiB".format(size / (1024 ** 3))
+            d["model_bytes"] = size
             d["vram_frac"] = (vram or 0) / size
         det = ps.get("details") or {}
         if det.get("parameter_size"):
@@ -459,6 +476,312 @@ def ollama_unload(tag):
         pass
 
 
+# ----------------------------------------------------------- telemetry (os)
+#
+# The engine's stderr is a confession; ioreg is the OS's own meter and
+# does not care what the engine wrote. While the passes run, a thread
+# polls the GPU accelerator entry a few times a second, so the verdict
+# can cross check the claimed placement against what the silicon was
+# seen doing: utilization over the compute windows, and the memory step
+# the weights make when they actually land on the GPU.
+
+TELE_HZ = 4.0  # one ioreg call costs 14-18 ms on the test machine; the
+               # measured decode disturbance at 4 Hz is in README limits
+TELE_PAD_S = 0.3  # decode ends about this long before the process does
+
+RE_TELE = {
+    "dev": re.compile(r'"Device Utilization %"=(\d+)'),
+    "ren": re.compile(r'"Renderer Utilization %"=(\d+)'),
+    "til": re.compile(r'"Tiler Utilization %"=(\d+)'),
+    "mem": re.compile(r'"In use system memory"=(\d+)'),
+}
+
+
+def read_gpu_stats():
+    """One ioreg sample, or None when there is nothing to read."""
+    try:
+        r = subprocess.run(
+            ["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"],
+            capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    m = re.search(r'"PerformanceStatistics" = \{(.*)\}', r.stdout)
+    if not m:
+        return None
+    s = {"t": time.monotonic()}
+    for key, rx in RE_TELE.items():
+        mm = rx.search(m.group(1))
+        s[key] = int(mm.group(1)) if mm else None
+    return s if s["dev"] is not None else None
+
+
+class _IOReport:
+    """GPU power without sudo: IOReport is the private framework that
+    powermetrics itself reads, and its energy counters answer any
+    process. Private means it can move between macOS versions, so every
+    call is guarded; when anything is missing or NULL, power quietly
+    stays off the os line and nothing else changes."""
+
+    SCALE = {"mJ": 1e-3, "uJ": 1e-6, "nJ": 1e-9}
+
+    def __init__(self):
+        p = ctypes.c_void_p
+        self.cf = ctypes.CDLL("/System/Library/Frameworks/"
+                              "CoreFoundation.framework/CoreFoundation")
+        self.io = ctypes.CDLL("/usr/lib/libIOReport.dylib")
+        for lib, name, res, args in (
+            (self.cf, "CFStringCreateWithCString", p,
+             [p, ctypes.c_char_p, ctypes.c_uint32]),
+            (self.cf, "CFStringGetCString", ctypes.c_bool,
+             [p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]),
+            (self.cf, "CFDictionaryGetValue", p, [p, p]),
+            (self.cf, "CFArrayGetCount", ctypes.c_long, [p]),
+            (self.cf, "CFArrayGetValueAtIndex", p, [p, ctypes.c_long]),
+            (self.cf, "CFRelease", None, [p]),
+            (self.io, "IOReportCopyChannelsInGroup", p,
+             [p, p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64]),
+            (self.io, "IOReportCreateSubscription", p,
+             [p, p, ctypes.POINTER(p), ctypes.c_uint64, p]),
+            (self.io, "IOReportCreateSamples", p, [p, p, p]),
+            (self.io, "IOReportCreateSamplesDelta", p, [p, p, p]),
+            (self.io, "IOReportChannelGetChannelName", p, [p]),
+            (self.io, "IOReportChannelGetUnitLabel", p, [p]),
+            (self.io, "IOReportSimpleGetIntegerValue", ctypes.c_int64,
+             [p, ctypes.POINTER(ctypes.c_int32)]),
+        ):
+            fn = getattr(lib, name)
+            fn.restype, fn.argtypes = res, args
+        chans = self.io.IOReportCopyChannelsInGroup(
+            self._cfstr("Energy Model"), None, 0, 0, 0)
+        if not chans:
+            raise OSError("no Energy Model channels")
+        subbed = ctypes.c_void_p()
+        self._sub = self.io.IOReportCreateSubscription(
+            None, chans, ctypes.byref(subbed), 0, None)
+        if not self._sub:
+            raise OSError("IOReport subscription failed")
+        self._subbed = subbed
+        self._key = self._cfstr("IOReportChannels")
+        self._prev = self.io.IOReportCreateSamples(self._sub, subbed, None)
+        self._t_prev = time.monotonic()
+
+    def _cfstr(self, s):
+        return self.cf.CFStringCreateWithCString(None, s.encode(),
+                                                 0x08000100)
+
+    def _pystr(self, ref):
+        buf = ctypes.create_string_buffer(128)
+        if ref and self.cf.CFStringGetCString(ref, buf, 128, 0x08000100):
+            return buf.value.decode()
+        return None
+
+    def watts(self):
+        """Average GPU watts since the previous call, or None."""
+        cur = self.io.IOReportCreateSamples(self._sub, self._subbed, None)
+        t = time.monotonic()
+        if not cur or t <= self._t_prev:
+            return None
+        delta = self.io.IOReportCreateSamplesDelta(self._prev, cur, None)
+        w = None
+        arr = self.cf.CFDictionaryGetValue(delta, self._key) \
+            if delta else None
+        for i in range(self.cf.CFArrayGetCount(arr) if arr else 0):
+            ch = self.cf.CFArrayGetValueAtIndex(arr, i)
+            name = self._pystr(self.io.IOReportChannelGetChannelName(ch))
+            if name == "GPU Energy":
+                unit = (self._pystr(
+                    self.io.IOReportChannelGetUnitLabel(ch)) or "").strip()
+                scale = self.SCALE.get(unit)
+                if scale:
+                    j = self.io.IOReportSimpleGetIntegerValue(ch, None)
+                    w = j * scale / (t - self._t_prev)
+                break
+        self.cf.CFRelease(self._prev)
+        if delta:
+            self.cf.CFRelease(delta)
+        self._prev, self._t_prev = cur, t
+        return w
+
+
+def thermal_raised():
+    """True when macOS itself says the machine is under thermal
+    pressure (pmset -g therm): a raised warning level or a CPU speed
+    limit under 100. Presentation only; it never votes on placement."""
+    out = _cmd_out(["pmset", "-g", "therm"])
+    m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
+    if m and int(m.group(1)) < 100:
+        return True
+    m = re.search(r"thermal warning level\s*=?\s*(\d+)", out, re.I)
+    return bool(m and int(m.group(1)) > 0)
+
+
+def telemetry_start(disabled=False):
+    """A running sampler, or a dict naming why there is none. The os
+    line prints that reason, so a run without OS evidence says so
+    instead of quietly reading like a fully instrumented one."""
+    if disabled:
+        return {"off": "disabled"}
+    if platform.system() != "Darwin":
+        return {"off": "not macos"}
+    if not shutil.which("ioreg"):
+        return {"off": "no ioreg"}
+    first = read_gpu_stats()
+    if first is None:
+        return {"off": "ioreg gave no gpu stats"}
+    return GpuSampler(first)
+
+
+class GpuSampler:
+    def __init__(self, first):
+        self.samples = [first]
+        self.marks = []
+        try:
+            self._power = _IOReport()
+        except Exception:
+            self._power = None  # private API absent or moved: no watts
+        self._hot = thermal_raised()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        period = 1.0 / TELE_HZ
+        while not self._stop.is_set():
+            tick = time.monotonic()
+            s = read_gpu_stats()
+            if s:
+                if self._power:
+                    try:
+                        s["gpu_w"] = self._power.watts()
+                    except Exception:
+                        self._power = None
+                self.samples.append(s)
+            self._stop.wait(max(0.05, period - (time.monotonic() - tick)))
+
+    def mark_pass(self, p):
+        """Called the moment a pass returns: pins the pass to the wall
+        clock, with the engine's own phase durations for the windows."""
+        self.marks.append({
+            "t_end": time.monotonic(), "wall_s": p["wall_s"],
+            "load_s": (p["load_ms"] or 0) / 1000.0,
+            "prompt_s": (p["prompt_ms"] or 0) / 1000.0,
+            "eval_s": (p["eval_ms"] or 0) / 1000.0,
+        })
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=2)
+        return telemetry_summary(self.samples, self.marks,
+                                 self._hot or thermal_raised())
+
+
+def _med(vals):
+    vals = [v for v in vals if v is not None]
+    return statistics.median(vals) if vals else None
+
+
+def telemetry_summary(samples, marks, hot=False):
+    """Distills the timeline into what the verdict and the os line use:
+    the idle baseline before pass 1, utilization over the compute
+    windows, and the memory step inside the pass windows. Windows are
+    tail aligned: decode ends at the pass end minus a small pad and
+    prefill sits right before it; checked against the engine's own
+    phase durations on the test machine (the gap between a head aligned
+    load end and a tail aligned prefill start measured about 0.6 s)."""
+    marks = [m for m in marks if m["wall_s"] and m["eval_s"]]
+    if not samples or not marks:
+        return {"off": "no samples"}
+    t_first = marks[0]["t_end"] - marks[0]["wall_s"]
+    idle = [s["dev"] for s in samples if s["t"] < t_first]
+    work, work_w, mem_run = [], [], []
+    for m in marks:
+        dec1 = m["t_end"] - TELE_PAD_S
+        pre0 = dec1 - m["eval_s"] - m["prompt_s"]
+        t0 = m["t_end"] - m["wall_s"]
+        for s in samples:
+            if pre0 <= s["t"] <= dec1:
+                work.append(s["dev"])
+                work_w.append(s.get("gpu_w"))
+            if t0 <= s["t"] <= m["t_end"] and s["mem"] is not None:
+                mem_run.append(s["mem"])
+    mem_base = _med([s["mem"] for s in samples if s["t"] < t_first])
+    step = None
+    if mem_base is not None and mem_run:
+        step = max(0, max(mem_run) - mem_base)
+    work = [w for w in work if w is not None]
+    return {
+        "hz": TELE_HZ, "n": len(samples),
+        "idle_med": _med(idle), "work_med": _med(work),
+        "work_n": len(work), "mem_step": step,
+        "work_w": _med(work_w), "throttled": bool(hot),
+    }
+
+
+def telemetry_vote(tele, rep, mode):
+    """The OS evidence's vote on the engine's placement claim: agree,
+    contradict or abstain. Only a full offload claim is judged; this
+    tool hunts fake GPU claims, it does not overturn an engine that
+    already confessed to CPU. Calibration on the test machine: a full
+    Metal offload ran its compute windows at a median 99 device
+    utilization with a +6.5 GiB memory step; a forced CPU run stayed
+    at a median 0 with single-sample spikes to 53 from the desktop,
+    which is why medians are judged and peaks are not."""
+    if not tele or tele.get("off"):
+        return "off"
+    if mode == "ollama":
+        full = rep["vram_frac"] is not None and rep["vram_frac"] >= 0.95
+    else:
+        n, total = rep["offload_n"], rep["offload_total"]
+        full = n is not None and total and n >= total
+    if not full:
+        return "na"
+    if tele["idle_med"] is None or tele["work_med"] is None \
+            or tele["work_n"] < 6:
+        return "abstain"
+    if tele["idle_med"] > 25:
+        # ioreg counts the whole GPU; on a busy desktop none of it can
+        # be pinned on this one process, so the numbers stop judging
+        return "abstain"
+    if tele["work_med"] >= 50:
+        return "agree"
+    if tele["work_med"] < tele["idle_med"] + 15:
+        mb = rep.get("model_bytes")
+        if mb and tele["mem_step"] is not None \
+                and tele["mem_step"] >= 0.5 * mb:
+            return "abstain"  # the memory step says the weights landed
+        return "contradict"
+    return "abstain"
+
+
+def os_line(tele):
+    """The one line of OS evidence in the block, None only when the
+    render has no telemetry context at all (pre-telemetry replays)."""
+    if tele is None:
+        return None
+    if tele.get("off"):
+        return "gpu not sampled ({}); evidence: engine+timing".format(
+            tele["off"])
+    if tele["idle_med"] is not None and tele["idle_med"] > 25:
+        return "gpu {:.0f}% busy before the run, not idle; not judged" \
+            .format(tele["idle_med"])
+    parts = []
+    if tele["idle_med"] is not None:
+        parts.append("idle {:.0f}%".format(tele["idle_med"]))
+    if tele["work_med"] is not None:
+        parts.append("work {:.0f}%".format(tele["work_med"]))
+    if tele["mem_step"] is not None:
+        parts.append("mem +{:.1f} GiB".format(tele["mem_step"] / 1024 ** 3))
+    w = tele.get("work_w")
+    if w is not None:
+        parts.append("{:.1f} W".format(w) if w < 100 else
+                     "{:.0f} W".format(w))
+    if tele.get("throttled"):
+        parts.append("throttled")
+    if not parts:
+        return "gpu sampled, nothing usable came back"
+    return "gpu " + ", ".join(parts)
+
+
 # ------------------------------------------------------------- aggregation
 
 def warm_stats(passes, key):
@@ -519,8 +842,11 @@ def attribute_why(state, rep, mode, engine_argv):
     fit figures, a backend init failure line. Every rung requires its
     evidence to be present in this run; when none is, the honest answer
     is the word unknown, not a plausible guess."""
-    if state not in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
-                     "CONFLICTING EVIDENCE"):
+    if state not in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD"):
+        # a conflict never takes a WHY line: the ladder attributes a
+        # proven degradation, and a conflict is two sources disagreeing
+        # about whether one happened at all. The paragraph names the
+        # fight; that is the attribution.
         return None
     why = None
     if mode == "ollama":
@@ -559,15 +885,24 @@ def attribute_why(state, rep, mode, engine_argv):
 
 # --------------------------------------------------------------- diagnosis
 
-def diagnose(cold, rep, mode):
-    """Returns (state, paragraph). State drives the exit code. The block
-    must stay inside 15 lines, which sets two paragraph budgets: about
-    160 characters (3 wrapped lines) for the states that carry no WHY
-    line, about 95 (2 wrapped lines) for the three degraded states that
-    do. Layer counts live in the gpu evidence line, not repeated here."""
+def diagnose(cold, rep, mode, tele=None):
+    """Returns (state, paragraph). State drives the exit code.
+
+    Three evidence sources vote: the engine's own confession (offload
+    lines, ollama ps), the OS meter (ioreg utilization and memory, when
+    sampled), and timing physics (the prefill/decode signature ratio).
+    A full offload claim earns HEALTHY only while no source actively
+    contradicts it; any two sources fighting is CONFLICTING EVIDENCE
+    with the fight spelled out. A missing source abstains and the os
+    line says what was missing; it never quietly counts as agreement.
+
+    The block must stay inside 15 lines; the renderer drops trailing
+    sentences from the paragraph until it fits, so the load bearing
+    sentence goes first."""
     decode = rep["decode_toks"] or cold["decode_toks"]
     prefill = rep["prefill_toks"] or cold["prefill_toks"]
     wait_s = 2500.0 / prefill if prefill else None
+    vote = telemetry_vote(tele, rep, mode)
 
     def fallback_para():
         bits = []
@@ -596,7 +931,12 @@ def diagnose(cold, rep, mode):
             )
         # ollama's reported split has been known to disagree with where
         # the kernels actually ran, so a full-GPU claim is cross checked
-        # against the speed signature before it earns HEALTHY.
+        # against the OS meter and the speed signature before HEALTHY.
+        if vote == "contradict":
+            return "CONFLICTING EVIDENCE", (
+                "Ollama says 100% GPU; the OS saw the GPU stay flat "
+                "while the tokens were made. Believe neither."
+            )
         if prefill and decode and prefill < 5 * decode:
             return "CONFLICTING EVIDENCE", (
                 "Ollama says 100% GPU; prefill at only {:.1f}x decode "
@@ -624,6 +964,20 @@ def diagnose(cold, rep, mode):
         return "PARTIAL OFFLOAD", (
             "The {} layers left on CPU set the pace; expect rates below "
             "a fully offloaded run.".format(total - n)
+        )
+    # a full offload claim from stderr, cross checked the same way the
+    # ollama one is: first the OS meter, then the speed signature
+    if vote == "contradict":
+        return "CONFLICTING EVIDENCE", (
+            "The engine says {}/{} layers on GPU; the OS saw the GPU "
+            "stay flat while the tokens were made. Believe "
+            "neither.".format(n, total)
+        )
+    if prefill and decode and prefill < 5 * decode:
+        return "CONFLICTING EVIDENCE", (
+            "The engine says {}/{} layers on GPU; prefill at only "
+            "{:.1f}x decode is CPU shaped. Believe neither.".format(
+                n, total, prefill / decode)
         )
     para = "The GPU did the work."
     if decode:
@@ -764,7 +1118,7 @@ def gpu_line(rep, mode):
 
 def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
                    explain_part=None, cold_note=None, why=None,
-                   ctx=CTX, extra=()):
+                   ctx=CTX, extra=(), tele=None):
     """The block stays inside 15 lines, kept narrow so it survives
     pasting into a forum comment (a long model name can push line one
     wider). The budget is a feature; never add lines without removing."""
@@ -790,6 +1144,11 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             astr = astr[:max(2, room) - 2] + ".."
         gline += " [" + astr + "]"
     out.append(gline)
+    oline = os_line(tele)
+    if oline:
+        # the OS's independent reading, right under the engine's claim;
+        # absent only on replays of runs that predate the sampler
+        out.append("os       " + oline)
     # ctx rides the dead gutter before the lane headers: the only
     # always-blank columns in the block ("ctx 9999999" just fits 11)
     out.append("{:<11}{:>13}  {:>13}  {:>13}".format(
@@ -822,13 +1181,22 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
         out.append(bar_line("prefill", prefill_s, prefill_s / wall))
         out.append(bar_line("decode", decode_s, decode_s / wall))
         out.append(bar_line("engine misc", other_s, other_s / wall))
+    # the 15 line budget is enforced, not hoped for: however many
+    # optional lines rode in (the os line, a WHY line), trailing
+    # sentences drop from the paragraph until the block fits
+    fixed = len(out) + (1 if why else 0) + 1  # + WHY + footer
     vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
                            width=WIDTH - 2, subsequent_indent="  ")
-    while why and len(vlines) > 2 and ". " in para.rstrip()[:-1]:
-        # a WHY line leaves the verdict two wrapped lines inside the 15
-        # line budget; the budget outranks the paragraph's last sentence,
-        # so trailing sentences drop until the wrap fits
-        para = para[:para.rstrip()[:-1].rfind(". ") + 1]
+    while len(vlines) > max(1, 15 - fixed):
+        body = para.rstrip()[:-1]
+        cut = body.rfind(". ")  # whole sentences drop first,
+        if cut >= 0:
+            para = para[:cut + 1]
+        else:
+            cut = body.rfind("; ")  # then a trailing clause
+            if cut < 0:
+                break
+            para = para[:cut] + "."
         vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
                                width=WIDTH - 2, subsequent_indent="  ")
     out.extend(vlines)
@@ -1207,14 +1575,19 @@ def selftest():
         l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
         cold_note = (l1 is not None and l2 is not None
                      and l1 < 2 * l2 + 500)
+        tele = None  # raw dirs that predate the sampler have no curve
+        tj = os.path.join(d, "telemetry.json")
+        if os.path.exists(tj):
+            tele = json.load(open(tj)).get("summary")
         rep = build_rep(passes)
-        state, para = diagnose(passes[0], rep, mode)
+        state, para = diagnose(passes[0], rep, mode, tele)
         extra = metas[0].get("extra_args", [])
         why = attribute_why(state, rep, mode, extra)
         got = render_verdict(
             machine_info(), metas[0].get("engine", "?"),
             metas[0].get("model_name", "?"), passes, state, para, mode,
-            None, cold_note, why, effective_ctx(extra), extra).splitlines()
+            None, cold_note, why, effective_ctx(extra), extra,
+            tele).splitlines()
         if got[:-1] == want[:-1]:
             rp_ok += 1
         else:
@@ -1247,10 +1620,67 @@ def selftest():
             and po["frac"] == 0.0 \
             and "unknown" in render_compare(("A", "B"), pa, po):
         cp_ok += 1
-    print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}"
-          .format(fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all))
+    # telemetry: synthetic timelines pushed through the real window
+    # math and the real three source judge (no gpu needed, ci safe)
+    te_ok, te_all = 0, 5
+    gib = 1024 ** 3
+
+    def synth_tele(idle_dev, work_dev, mem_base, mem_peak):
+        # one 11.2 s pass after a 1.2 s baseline, ticked at 4 Hz; busy
+        # samples land exactly in the tail aligned compute window
+        t_end, wall, load_s, prompt_s, eval_s = 12.4, 11.2, 2.0, 1.3, 6.3
+        dec1 = t_end - TELE_PAD_S
+        pre0 = dec1 - eval_s - prompt_s
+        t0, samples, t = t_end - wall, [], 0.0
+        while t < t_end + 0.5:
+            in_work = pre0 <= t <= dec1
+            samples.append({
+                "t": t,
+                "dev": work_dev if in_work else idle_dev,
+                "gpu_w": 10.6 if in_work and work_dev >= 50 else 0.02,
+                "mem": mem_peak if t >= t0 + load_s else mem_base})
+            t += 0.25
+        return telemetry_summary(samples, [{
+            "t_end": t_end, "wall_s": wall, "load_s": load_s,
+            "prompt_s": prompt_s, "eval_s": eval_s}])
+
+    fx = blank_pass()
+    fx.update(offload_n=33, offload_total=33, prefill_toks=558.9,
+              decode_toks=20.0, model_bytes=int(5.28 * gib))
+    busy = synth_tele(0, 99, 600 * 1024 ** 2, int(7.0 * gib))
+    flat = synth_tele(0, 0, 600 * 1024 ** 2, 700 * 1024 ** 2)
+    # 1: gpu busy aligned with the compute window backs the full claim
+    if telemetry_vote(busy, fx, "llama.cpp") == "agree" \
+            and diagnose(fx, fx, "llama.cpp", busy)[0] == "HEALTHY" \
+            and "mem +6.4 GiB, 10.6 W" in os_line(busy):
+        te_ok += 1
+    # 2: a flat line under a full offload claim is a two source fight;
+    #    the WHY ladder stays out (the block itself is the exhibit)
+    st, para = diagnose(fx, fx, "llama.cpp", flat)
+    if st == "CONFLICTING EVIDENCE" and "stay flat" in para \
+            and attribute_why(st, fx, "llama.cpp", []) is None:
+        te_ok += 1
+    # 3: a busy desktop disqualifies whole-gpu numbers: abstain, say so
+    lifted = synth_tele(47, 99, 600 * 1024 ** 2, int(7.0 * gib))
+    if telemetry_vote(lifted, fx, "llama.cpp") == "abstain" \
+            and diagnose(fx, fx, "llama.cpp", lifted)[0] == "HEALTHY" \
+            and "not judged" in os_line(lifted):
+        te_ok += 1
+    # 4: the memory step vetoes the flat line contradiction
+    stepped = synth_tele(0, 0, 600 * 1024 ** 2, int(6.4 * gib))
+    if telemetry_vote(stepped, fx, "llama.cpp") == "abstain":
+        te_ok += 1
+    # 5: timing physics alone still catches a cpu shaped full claim
+    slow = dict(fx, prefill_toks=28.3, decode_toks=12.0)
+    st, para = diagnose(slow, slow, "llama.cpp")
+    if st == "CONFLICTING EVIDENCE" and "CPU shaped" in para \
+            and attribute_why(st, slow, "llama.cpp", []) is None:
+        te_ok += 1
+    print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
+          "telemetry {}/{}".format(fx_ok, fx_all, rp_ok, rp_all,
+                                   cp_ok, cp_all, te_ok, te_all))
     sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
-             and cp_ok == cp_all else 1)
+             and cp_ok == cp_all and te_ok == te_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -1331,6 +1761,9 @@ def main():
     ap.add_argument("--keep-logs", metavar="DIR",
                     help="save the raw engine output of each pass into DIR "
                          "(the evidence behind the verdict)")
+    ap.add_argument("--no-telemetry", action="store_true",
+                    help="skip the OS-side GPU sampling; the os line then "
+                         "says the verdict rests on engine+timing only")
     ap.add_argument("--selftest", action="store_true",
                     help="replay examples/raw through the parser and "
                          "diagnosis; verify the committed verdicts reproduce")
@@ -1372,16 +1805,22 @@ def main():
         (lambda name: None)
 
     passes = []
+    sampler = None
     if os.path.isfile(args.model):
         mode = "llama.cpp"
         binpath = find_binary(args.bin)
         engine_str = "llama.cpp " + engine_version(binpath)
         model_name = os.path.basename(args.model)
+        sampler = telemetry_start(args.no_telemetry)
+        if isinstance(sampler, GpuSampler):
+            time.sleep(1.2)  # a few ticks of idle baseline before pass 1
         for i in range(args.passes):
             sys.stderr.write("picchio: pass {}{} ...\n".format(
                 i + 1, " (includes any cold load)" if i == 0 else " (warm)"))
             p = run_llama_pass(binpath, args.model, args.extra,
                                lp("pass{}.stderr.txt".format(i + 1)))
+            if isinstance(sampler, GpuSampler):
+                sampler.mark_pass(p)
             keep_log(lp("pass{}.meta.json".format(i + 1)), json.dumps(
                 {"wall_s": p["wall_s"], "engine": engine_str,
                  "model_name": model_name, "extra_args": args.extra},
@@ -1413,15 +1852,26 @@ def main():
             sys.stderr.write("picchio: unloading model for a colder "
                              "pass 1 ...\n")
             ollama_unload(args.model)
+        sampler = telemetry_start(args.no_telemetry)
+        if isinstance(sampler, GpuSampler):
+            time.sleep(1.2)  # a few ticks of idle baseline before pass 1
         for i in range(args.passes):
             sys.stderr.write("picchio: pass {}{} ...\n".format(
                 i + 1, " (includes any cold load)" if i == 0 else " (warm)"))
             p, ps = run_ollama_pass(
                 args.model, lp("pass{}.response.json".format(i + 1)))
+            if isinstance(sampler, GpuSampler):
+                sampler.mark_pass(p)
             keep_log(lp("pass{}.meta.json".format(i + 1)), json.dumps(
                 {"wall_s": p["wall_s"], "engine": engine_str,
                  "model_name": model_name, "ps": ps}, indent=1))
             passes.append(p)
+
+    tele = sampler.stop() if isinstance(sampler, GpuSampler) else sampler
+    if isinstance(sampler, GpuSampler):
+        keep_log(lp("telemetry.json"), json.dumps(
+            {"summary": tele, "marks": sampler.marks,
+             "samples": sampler.samples}, indent=1))
 
     cold_note = None
     l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
@@ -1429,7 +1879,7 @@ def main():
         cold_note = True
 
     rep = build_rep(passes)
-    state, para = diagnose(passes[0], rep, mode)
+    state, para = diagnose(passes[0], rep, mode, tele)
     why = attribute_why(state, rep, mode, args.extra)
 
     explain_part = None
@@ -1444,7 +1894,7 @@ def main():
 
     block = render_verdict(mach, engine_str, model_name, passes, state,
                            para, mode, explain_part, cold_note, why,
-                           effective_ctx(args.extra), args.extra)
+                           effective_ctx(args.extra), args.extra, tele)
     print(colorize(block))
 
     save_cache({
@@ -1461,7 +1911,7 @@ def main():
                           "model": model_name, "mode": mode,
                           "protocol": PROTOCOL, "passes": passes,
                           "warm_median": rates, "state": state,
-                          "why": why}, indent=1))
+                          "why": why, "telemetry": tele}, indent=1))
 
     codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
              "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,

@@ -4,9 +4,10 @@
 
 <h1>picchio</h1>
 
-<p>Four quantizers, one Q4_K_M label: 5.02 to 5.27 bits per weight.
-One run: 6763 tok/s in one lane, 25 in another. One Python file
-that measures what you have, what a run did, and where it ran.</p>
+<p>GPU acceleration is easy to claim and hard to prove. picchio
+does not trust one tok/s number: it splits prefill, decode and
+wallclock, reads the engine's log against the OS's GPU meter, and
+says whether the GPU did the work.</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -56,13 +57,11 @@ folder, the HF and LM Studio caches) and runs the one you pick. A
 measurement mode.
 
 One Python file, stdlib only; python3 plus either llama.cpp or
-ollama is everything it needs. It runs your model three times with
-a fixed prompt (the
-first pass cold, the rest warm), reads the engine's own numbers
-while a background thread reads the OS's GPU meter, and prints the
-block above. A run costs about a minute here with the GPU engaged,
-a few minutes on CPU; it writes one small cache file under
-`~/.cache/picchio`, modifies nothing, and leaves no process behind.
+ollama is everything it needs. Three passes with a fixed prompt,
+the first one cold: about a minute here with the GPU engaged, a
+few minutes on CPU. It writes one small cache file under
+`~/.cache/picchio`, modifies nothing, and leaves no process
+behind.
 
 `python3 picchio.py --selftest` replays the raw engine logs in
 [examples/raw/](examples/raw/) and must reproduce every committed
@@ -126,8 +125,7 @@ an ollama tag, read only, exit 0.
 
 ## The three numbers
 
-Every tok/s figure belongs to one of three lanes, and picchio never
-merges them. Prefill (elsewhere called prompt processing or pp) is
+Prefill (elsewhere called prompt processing or pp) is
 how fast the model reads your prompt; decode (tg or eval) is how
 fast it writes the answer; wallclock is generated tokens divided by
 everything, load and warmup included. In the block above the warm
@@ -200,10 +198,8 @@ which evidence is left.
 
 ## Not just llama-bench
 
-llama-bench is fine. It answers a different question: how fast
-this machine can run this model, as steady state pp and tg rates.
-picchio answers what actually happened on a real run. Measured on
-this machine, same model, same day:
+llama-bench answers a different question: steady state pp and tg
+for this machine and model. Measured here, same model, same day:
 
 | tool, config              | prompt side   | generation side | notes                     |
 |---------------------------|---------------|-----------------|---------------------------|
@@ -220,11 +216,10 @@ verdict.
 Apple M5, 32 GB, macOS 26.5.1, llama.cpp build 9430 and ollama
 0.31.1, roughly 730 prompt tokens and 128 generated tokens per pass,
 three passes, the first one cold. That protocol is named in every
-block footer (mp1); if it ever changes the tag changes. Every
-number came out of a real run on the machine in its row, the lane
-columns hold warm medians, and the raw engine output behind the
-first three rows and the 4090 row sits in
-[examples/raw/](examples/raw/), written by `--keep-logs`.
+block footer (mp1); if it ever changes the tag changes. The lane
+columns hold warm medians; the raw engine output behind the first
+three rows and the 4090 row is in [examples/raw/](examples/raw/),
+written by `--keep-logs`.
 
 | machine         | model, engine                      | protocol | prefill | decode | wallclock | verdict             |
 |-----------------|------------------------------------|----------|--------:|-------:|----------:|---------------------|

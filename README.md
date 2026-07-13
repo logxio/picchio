@@ -64,10 +64,6 @@ block above. A run costs about a minute here with the GPU engaged,
 a few minutes on CPU; it writes one small cache file under
 `~/.cache/picchio`, modifies nothing, and leaves no process behind.
 
-When to rerun it: after a llama.cpp or ollama upgrade, after an OS
-update, after switching quants of the same model, after touching -ngl
-or context size, and once before you post a tok/s number anywhere.
-
 `python3 picchio.py --selftest` replays the raw engine logs in
 [examples/raw/](examples/raw/) and must reproduce every committed
 verdict block line for line; the badge runs it on every push.
@@ -249,8 +245,7 @@ go to the top of the pile.
 The 35B rows: a 34.7B MoE with about 3B active parameters decodes
 1.6x faster here than the dense 9B, while its 20.6 GiB of weights
 turn the cold start into a load problem: 13 of the first pass's 19
-seconds. A background download cut decode roughly in half; run
-picchio on an idle machine.
+seconds. A background download cut decode roughly in half.
 
 ## Limits
 

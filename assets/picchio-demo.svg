@@ -5,30 +5,30 @@
 <circle cx="42" cy="17" r="6" fill="#febc2e"/>
 <circle cx="62" cy="17" r="6" fill="#28c840"/>
 <text x="22" y="69" xml:space="preserve"><tspan class="a0" fill="#e6edf3">$ </tspan><tspan class="a1" fill="#e6edf3">pyt</tspan><tspan class="a2" fill="#e6edf3">hon</tspan><tspan class="a3" fill="#e6edf3">3 p</tspan><tspan class="a4" fill="#e6edf3">icc</tspan><tspan class="a5" fill="#e6edf3">hio</tspan><tspan class="a6" fill="#e6edf3">.py</tspan></text>
-<text x="22" y="89" xml:space="preserve" class="a7"><tspan fill="#e6edf3">2 models found.</tspan></text>
+<text x="22" y="89" xml:space="preserve" class="a7"><tspan fill="#e6edf3" font-weight="bold">2 models found.</tspan></text>
 <text x="22" y="109" xml:space="preserve" class="a8"></text>
-<text x="22" y="129" xml:space="preserve" class="a9"><tspan fill="#e6edf3">  1) qwen3.6:35b-a3b                          ollama</tspan></text>
-<text x="22" y="149" xml:space="preserve" class="a10"><tspan fill="#e6edf3">  2) qwen3.5:9b                               ollama</tspan></text>
+<text x="22" y="129" xml:space="preserve" class="a9"><tspan fill="#e6edf3">   1) qwen3.6:35b-a3b</tspan><tspan fill="#8b949e">   20.6 GiB   ollama</tspan></text>
+<text x="22" y="149" xml:space="preserve" class="a10"><tspan fill="#e6edf3">   2) qwen3.5:9b</tspan><tspan fill="#8b949e">         5.3 GiB   ollama</tspan></text>
 <text x="22" y="169" xml:space="preserve" class="a11"></text>
 <text x="22" y="189" xml:space="preserve"><tspan class="a12" fill="#e6edf3">Model (number, path, or tag): </tspan><tspan class="a13" fill="#e6edf3">2</tspan></text>
-<text x="22" y="209" xml:space="preserve" class="a14"><tspan fill="#e6edf3">Selected: qwen3.5:9b (ollama).</tspan></text>
+<text x="22" y="209" xml:space="preserve" class="a14"><tspan fill="#e6edf3">Selected: qwen3.5:9b (ollama, 5.3 GiB).</tspan></text>
 <text x="22" y="229" xml:space="preserve" class="a15"><tspan fill="#e6edf3">picchio: pass 1 (includes any cold load) ...</tspan></text>
 <text x="22" y="249" xml:space="preserve" class="a16"><tspan fill="#e6edf3">picchio: pass 2 (warm) ...</tspan></text>
 <text x="22" y="269" xml:space="preserve" class="a17"><tspan fill="#e6edf3">picchio: pass 3 (warm) ...</tspan></text>
 <text x="22" y="289" xml:space="preserve" class="a18"><tspan fill="#e6edf3">model    qwen3.5:9b, 9.0 B, Q4_K_M, 5.55 GiB, ollama 0.31.1</tspan></text>
 <text x="22" y="309" xml:space="preserve" class="a19"><tspan fill="#e6edf3">gpu      </tspan><tspan fill="#3fb950" font-weight="bold">ENGAGED</tspan><tspan fill="#e6edf3">: 100% of weights in GPU memory (ollama ps)</tspan></text>
-<text x="22" y="329" xml:space="preserve" class="a20"><tspan fill="#e6edf3">os       gpu idle 4%, work 98%, mem +5.8 GiB, 10.6 W</tspan></text>
+<text x="22" y="329" xml:space="preserve" class="a20"><tspan fill="#e6edf3">os       gpu idle 0%, work 98%, mem +6.2 GiB, 10.7 W</tspan></text>
 <text x="22" y="349" xml:space="preserve" class="a21"><tspan fill="#8b949e">ctx 4096         prefill         decode      wallclock</tspan></text>
-<text x="22" y="369" xml:space="preserve" class="a22"><tspan fill="#e6edf3">  cold       521.6 tok/s     20.5 tok/s     12.2 tok/s</tspan></text>
-<text x="22" y="389" xml:space="preserve" class="a23"><tspan fill="#e6edf3">  warm mid   838.8 tok/s     20.5 tok/s     17.5 tok/s</tspan></text>
-<text x="22" y="409" xml:space="preserve" class="a24"><tspan fill="#e6edf3">  warm span      829~848      20.5~20.5      17.5~17.6</tspan></text>
-<text x="22" y="429" xml:space="preserve" class="a25"><tspan fill="#e6edf3">where the cold pass went (10.5 s)</tspan></text>
-<text x="22" y="449" xml:space="preserve" class="a26"><tspan fill="#e6edf3">  load weights    2.8 s  #######.....................   26%</tspan></text>
-<text x="22" y="469" xml:space="preserve" class="a27"><tspan fill="#e6edf3">  prefill         1.5 s  ####........................   14%</tspan></text>
-<text x="22" y="489" xml:space="preserve" class="a28"><tspan fill="#e6edf3">  decode          6.2 s  #################...........   60%</tspan></text>
+<text x="22" y="369" xml:space="preserve" class="a22"><tspan fill="#e6edf3">  cold       518.9 tok/s     18.6 tok/s     11.5 tok/s</tspan></text>
+<text x="22" y="389" xml:space="preserve" class="a23"><tspan fill="#e6edf3">  warm mid   846.6 tok/s     20.0 tok/s     17.1 tok/s</tspan></text>
+<text x="22" y="409" xml:space="preserve" class="a24"><tspan fill="#e6edf3">  warm span      841~852      19.3~20.7      16.6~17.6</tspan></text>
+<text x="22" y="429" xml:space="preserve" class="a25"><tspan fill="#e6edf3">where the cold pass went (11.2 s)</tspan></text>
+<text x="22" y="449" xml:space="preserve" class="a26"><tspan fill="#e6edf3">  load weights    2.8 s  #######.....................   25%</tspan></text>
+<text x="22" y="469" xml:space="preserve" class="a27"><tspan fill="#e6edf3">  prefill         1.5 s  ####........................   13%</tspan></text>
+<text x="22" y="489" xml:space="preserve" class="a28"><tspan fill="#e6edf3">  decode          6.9 s  #################...........   62%</tspan></text>
 <text x="22" y="509" xml:space="preserve" class="a29"><tspan fill="#e6edf3">  engine misc     0.0 s  ............................    0%</tspan></text>
 <text x="22" y="529" xml:space="preserve" class="a30"><tspan fill="#e6edf3">VERDICT: </tspan><tspan fill="#3fb950" font-weight="bold">HEALTHY</tspan><tspan fill="#e6edf3">. Ollama reports 100% of weights in GPU memory.</tspan></text>
-<text x="22" y="549" xml:space="preserve" class="a31"><tspan fill="#e6edf3">  Quote the warm median decode: 20.5 tok/s.</tspan></text>
+<text x="22" y="549" xml:space="preserve" class="a31"><tspan fill="#e6edf3">  Quote the warm median decode: 20.0 tok/s.</tspan></text>
 <text x="22" y="569" xml:space="preserve" class="a32"><tspan fill="#8b949e">-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1</tspan></text>
 <text x="536" y="593" text-anchor="end" fill="#8b949e" font-size="11">replay of a real run, time compressed</text>
 </svg>

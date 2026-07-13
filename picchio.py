@@ -493,18 +493,35 @@ HINT_NO_MODELS = (
     "  python3 picchio.py some-tag:latest")
 
 
+def human_size(nbytes):
+    """Model-file scale: GiB with one decimal, MiB below one GiB,
+    blank when the source offered nothing."""
+    if not nbytes:
+        return ""
+    if nbytes >= 1024 ** 3:
+        return "{:.1f} GiB".format(nbytes / float(1024 ** 3))
+    return "{:.0f} MiB".format(nbytes / float(1024 ** 2))
+
+
+def _sourced(note, size):
+    """'ollama, 5.3 GiB' for a human; just the source when size is blank."""
+    return note + (", " + size if size else "")
+
+
 def scan_models():
     """Look around this machine (read only, fast) for models it can run:
     ollama tags (the live api, or the manifest folder when ollama is not
     up), then .gguf files in this folder, the HF cache and the LM Studio
-    folders. Returns (label, note, arg) rows: label and note name the
-    source for a human, arg is the exact string the pipeline runs."""
+    folders. Returns (label, note, arg, size) rows: label, note and size
+    name the source for a human (size stays blank when nothing cheap
+    reports it), arg is the exact string the pipeline runs."""
     ollama = []
     if ollama_reachable():
         try:
             for m in ollama_api("/api/tags", timeout=5).get("models", []):
                 if m.get("name"):
-                    ollama.append((m["name"], "ollama", m["name"]))
+                    ollama.append((m["name"], "ollama", m["name"],
+                                   human_size(m.get("size"))))
         except (urllib.error.URLError, OSError, ValueError):
             pass
     else:
@@ -512,7 +529,7 @@ def scan_models():
         for reg in glob.glob(os.path.join(base, "*", "*", "*", "*")):
             parts = reg.split(os.sep)
             full = "{}:{}".format(parts[-2], parts[-1])
-            ollama.append((full, "ollama, not running", full))
+            ollama.append((full, "ollama, not running", full, ""))
 
     patterns = (
         "*.gguf",
@@ -528,7 +545,11 @@ def scan_models():
             if real in seen or "mmproj" in base or f.endswith(".partial"):
                 continue
             seen.add(real)
-            ggufs.append((os.path.basename(f), "gguf", f))
+            try:
+                size = human_size(os.path.getsize(real))
+            except OSError:
+                size = ""
+            ggufs.append((os.path.basename(f), "gguf", f, size))
     return ollama[:8] + ggufs[:8]
 
 
@@ -536,9 +557,11 @@ def print_discovery(cands):
     """No terminal to ask at (a pipe or a redirect): print the commands
     that reproduce a run instead of a menu, each still pasteable as is."""
     print("picchio: no model given. Runnable on this machine:\n")
-    for label, note, arg in cands:
-        q = '"{}"'.format(arg) if " " in arg else arg
-        print("  python3 picchio.py {:<36} ({})".format(q, note))
+    rows = [('"{}"'.format(arg) if " " in arg else arg,
+             _sourced(note, size)) for label, note, arg, size in cands]
+    w = min(max(len(q) for q, _ in rows), 48)
+    for q, note in rows:
+        print("  python3 picchio.py {:<{w}} ({})".format(q, note, w=w))
     print("\nPick one, or point it at any other .gguf path or ollama tag.")
 
 
@@ -568,14 +591,18 @@ def resolve_direction(cands, interactive, ask, emit):
         raw = (ask("Model (path or tag): ") or "").strip()
         return ("run", raw) if raw else ("stop", None)
     if len(cands) == 1:
-        label, note, arg = cands[0]
+        label, note, arg, size = cands[0]
         emit("1 model found.")
-        emit("Selected: {} ({}).".format(label, note))
+        emit("Selected: {} ({}).".format(label, _sourced(note, size)))
         return ("run", arg)
     emit("{} models found.".format(len(cands)))
     emit("")
-    for i, (label, note, arg) in enumerate(cands, 1):
-        emit("  {}) {:<40} {}".format(i, label, note))
+    w = min(max(len(c[0]) for c in cands), 44)
+    for i, (label, note, arg, size) in enumerate(cands, 1):
+        if len(label) > w:
+            label = label[:w - 14] + "..." + label[-11:]
+        emit("  {:>2}) {:<{w}}  {:>9}   {}".format(i, label, size, note,
+                                                   w=w))
     emit("")
     while True:
         line = ask("Model (number, path, or tag): ")
@@ -585,8 +612,9 @@ def resolve_direction(cands, interactive, ask, emit):
         if raw.isdigit():
             k = int(raw)
             if 1 <= k <= len(cands):
-                label, note, arg = cands[k - 1]
-                emit("Selected: {} ({}).".format(label, note))
+                label, note, arg, size = cands[k - 1]
+                emit("Selected: {} ({}).".format(label,
+                                                 _sourced(note, size)))
                 return ("run", arg)
             emit("No model {} in the list.".format(k))
             continue
@@ -1545,6 +1573,22 @@ def colorize(text):
             line = BOLD + line + RESET
         out.append(line)
     return "\n".join(out)
+
+
+def menu_paint(line):
+    """Discovery-menu color under colorize's contract: terminals only,
+    NO_COLOR respected, and the plain text underneath is exactly what
+    the selftest asserts on. Names carry the eye; the size and source
+    columns sit dim behind them."""
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return line
+    BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
+    if re.match(r"^\d+ models? found\.$", line):
+        return BOLD + line + RESET
+    m = re.match(r"^(  +\d+\) )(.*?)(  +\S.*)$", line)
+    if m:
+        return m.group(1) + m.group(2) + DIM + m.group(3) + RESET
+    return line
 
 
 def gpu_line(rep, mode):
@@ -2874,7 +2918,7 @@ def plan_cli(argv):
         except (urllib.error.URLError, OSError, ValueError):
             pass
     rows = []
-    for label, note, arg in scan_models():
+    for label, note, arg, _size in scan_models():
         if note == "gguf":
             n, fb, meta, why = plan_target(arg)
             rows.append(plan_row(n, fb, meta, why, budget, bw))
@@ -3761,9 +3805,10 @@ def selftest():
     # onboarding: the zero-argument entry decision is pure given what the
     # scan found, whether a terminal is attached, and what gets typed. The
     # four paths plus the two edges, none of them touching a tty or a gpu
-    gd_ok, gd_all = 0, 6
-    two = [("qwen3.5:9b", "ollama", "qwen3.5:9b"),
-           ("llama-3-8b.gguf", "gguf", "/models/llama-3-8b.gguf")]
+    gd_ok, gd_all = 0, 7
+    two = [("qwen3.5:9b", "ollama", "qwen3.5:9b", "5.3 GiB"),
+           ("llama-3-8b.gguf", "gguf", "/models/llama-3-8b.gguf",
+            "4.6 GiB")]
     one = [two[0]]
 
     def scripted(lines):
@@ -3804,6 +3849,15 @@ def selftest():
     if resolve_direction(two, True, scripted(["9", "1"]), emit) \
             == ("run", "qwen3.5:9b") \
             and any("No model 9" in x for x in log):
+        gd_ok += 1
+    # 7: a name longer than the column truncates in the menu row only;
+    # the size column survives and the untouched full path still runs
+    log, emit = sink()
+    longlab = "L" * 47 + "-Q4_K_M.gguf"
+    if resolve_direction(two + [(longlab, "gguf", "/m/" + longlab,
+                                 "8.0 GiB")], True, scripted(["3"]),
+                         emit) == ("run", "/m/" + longlab) \
+            and any("..." in x and "8.0 GiB" in x for x in log):
         gd_ok += 1
     vp_ok, vp_all = 0, 3
     if parse_engine_version("version: 9430 (d48a56ef)") == "b9430":
@@ -4018,7 +4072,8 @@ def main():
         cands = scan_models()
         interactive = sys.stdin.isatty() and sys.stdout.isatty()
         action, chosen = resolve_direction(
-            cands, interactive, _ask_line, print)
+            cands, interactive, _ask_line,
+            lambda line: print(menu_paint(line)))
         if action == "run":
             args.model = chosen
         else:

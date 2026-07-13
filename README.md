@@ -246,12 +246,10 @@ first three rows and the 4090 row sits in
 | RTX 4090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      |  6763.3 |  138.0 |      25.2 | HEALTHY             |
 | your machine    |                                    |          |         |        |           |                     |
 
-I only own one computer (the 4090 is rented by the hour to
-exercise the Linux path), which is why this table is mostly missing.
-Run picchio once and paste the verdict block into an issue, even if
-it says everything is fine; a boring HEALTHY on hardware I do not
-have is still a data point. A wrong verdict is the issue I want
-most: [misdiagnosis reports](.github/ISSUE_TEMPLATE/misdiagnosis-report.md)
+Run picchio once and paste the verdict block into an issue; a
+boring HEALTHY on hardware I do not have is still a data point. A
+wrong verdict is the issue I want most:
+[misdiagnosis reports](.github/ISSUE_TEMPLATE/misdiagnosis-report.md)
 go to the top of the pile.
 
 The 35B rows: a 34.7B MoE with about 3B active parameters decodes

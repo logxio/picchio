@@ -127,11 +127,11 @@ weight, a mix of five tensor types from 4.50 to 32.00 bits, and
 the header's own byte offsets have to audit to the same total
 before the card prints. The same Qwen3.5-9B under the same Q4_K_M
 label measures 5.02 to 5.27 bits per weight across four
-quantizers. The card also cites the KV cache dtype from the last
-run measured here, because the file does not carry that choice,
-and on a mixture of experts it reports how many experts wake per
-token ([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256,
-about 3.5B of 34.7B weights per token). Works on a .gguf path or
+quantizers. The KV cache dtype is not in the file; the card cites
+the last run measured here. On a mixture of experts it reports how
+many experts wake per token
+([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about
+3.5B of 34.7B weights per token). Works on a .gguf path or
 an ollama tag, read only, exit 0.
 
 ## The three numbers
@@ -140,8 +140,8 @@ Every tok/s figure belongs to one of three lanes, and picchio never
 merges them. Prefill (elsewhere called prompt processing or pp) is
 how fast the model reads your prompt; decode (tg or eval) is how
 fast it writes the answer; wallclock is generated tokens divided by
-everything, load and warmup included, which is what your stopwatch
-measures. In the block above the warm medians land at 588, 21.1 and
+everything, load and warmup included. In the block above the warm
+medians land at 588, 21.1 and
 15.5; on the CPU run below they land at 27, 12 and 3; on the rented
 4090 the same model lands at 6763, 138 and 25.
 
@@ -199,34 +199,30 @@ the matrix did surface was this silent fallback.
 ## The os line
 
 While the passes run, a background thread reads the OS's own GPU
-accounting: on macOS `ioreg` at 4 Hz plus GPU power from the same
-energy counters `powermetrics` reports, minus the sudo, and on
-Linux with an NVIDIA gpu the driver's own NVML meter. That is the
-`os` line. HEALTHY requires the engine's log, the OS meter and the
-speed signature to agree; a full offload claim over a GPU the OS
-saw stay flat gets CONFLICTING EVIDENCE (exit 5). On an NVIDIA
-machine, a build that prints no gpu evidence at all while the
-meter watches the gpu stay idle gets SILENT CPU FALLBACK (exit 4),
-measured on a real mis-built binary
-([examples/linux-4090.txt](examples/linux-4090.txt) is the healthy
-side of that box). A missing source abstains, and the line says
+meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
+counters, minus the sudo; on NVIDIA Linux, the driver's NVML. That
+is the `os` line. HEALTHY requires the engine's log, the OS meter
+and the speed signature to agree; a full offload claim over a GPU
+the OS saw stay flat gets CONFLICTING EVIDENCE (exit 5). A build
+that prints no gpu evidence at all while the meter watches the gpu
+stay idle gets SILENT CPU FALLBACK (exit 4), measured on a real
+mis-built binary. A missing source abstains, and the line says
 which evidence is left.
 
 ## Not just llama-bench
 
-llama-bench is good and you should use it; it answers a different
-question, how fast this machine can run this model as steady state
-pp and tg rates. picchio answers what actually happened on a real
-run. Measured on this machine, same model, same day:
+llama-bench is fine. It answers a different question: how fast
+this machine can run this model, as steady state pp and tg rates.
+picchio answers what actually happened on a real run. Measured on
+this machine, same model, same day:
 
 | tool, config              | prompt side   | generation side | notes                     |
 |---------------------------|---------------|-----------------|---------------------------|
 | llama-bench, default      | pp256: 597.06 | tg64: 20.21     | backend column: BLAS,MTL  |
 | llama-bench, -ngl 0 (CPU) | pp256: 27.82  | tg64: 11.90     | backend column: BLAS,MTL  |
 
-Both rows report the same backend, because that column describes
-what the binary was compiled with, not where your tokens were
-computed. The rented 4090 shows the same behavior: its CUDA build
+That column lists what the binary was compiled with, not where
+your tokens ran. The rented 4090 shows the same behavior: its CUDA build
 keeps `CUDA` in that column at `-ngl 0`. The 21x prompt side
 collapse is the CPU run's only visible trace; there is no load
 time, no cold/warm split, no verdict.
@@ -280,10 +276,9 @@ picchio on a machine that is otherwise idle.
 - The full verdict block, with its three lanes and cold-start
   breakdown, is llama.cpp and ollama only. MLX, LM Studio and other
   engines get placement truth through `watch`, not the lane table.
-- Ollama mode cannot see per layer placement, device init logs, or
-  thread configuration; ollama does not expose them. Placement
-  comes from the memory split ollama reports, and reads unknown
-  when no split is reported.
+- Ollama does not expose per layer placement, device init logs, or
+  thread configuration. Placement comes from the memory split it
+  reports, unknown when there is none.
 - Server mode gets no placement claim from the llama-server api,
   so the judgment rests on the os meter and the speed signature;
   there is no cold row (the server already owns the weights), each

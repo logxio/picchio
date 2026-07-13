@@ -1,0 +1,11 @@
+picchio plan: 2 models on this machine
+budget 25.0 GiB (metal working set, 0.78 of 32 GB ram)
+kv counted at ctx 4096
+
+  model                              need   fit    est decode
+  qwen3.6:35b-a3b                21.2 GiB   fits   n/a (moe)
+  qwen3.5:9b                      5.9 GiB   fits   ~19.8 tok/s
+
+every est decode figure is an estimate projected from one measured
+  run (calibrated by Qwen3.5-9B-Q4_K_M.gguf at 19.9 tok/s decode),
+  not a measurement

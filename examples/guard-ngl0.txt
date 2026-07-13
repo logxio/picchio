@@ -1,0 +1,9 @@
+$ python3 picchio.py guard -- llama-completion \
+    -m /tmp/models/Qwen3.5-9B-Q4_K_M.gguf \
+    -p "Say hi." -n 16 --verbose -ngl 0
+[1370 lines of the engine's own stderr stream through]
+picchio guard: NOT ENGAGED: 0/33 layers on GPU (Metal: Apple M5); WHY: forced by flag: -ngl 0
+[472 more engine lines; the run finishes on its own]
+picchio guard: llama-completion exited 0 after 8.6 s
+picchio guard: NOT ENGAGED: 0/33 layers on GPU (Metal: Apple M5); WHY: forced by flag: -ngl 0
+picchio guard: last rates seen: prefill 8.5 tok/s, decode 10.4 tok/s

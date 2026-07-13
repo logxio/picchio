@@ -1,0 +1,24 @@
+$ python3 picchio.py compare mine.txt theirs.txt
+picchio compare
+A: examples/healthy-metal.txt
+B: examples/cpu-fallback.txt
+
+           A                         B
+model      Qwen3.5-9B-Q4_K_M.gguf    same
+quant      Q4_K_M                    same
+engine     llama.cpp b9430           same
+place      33/33 layers on GPU       0/33 layers on GPU
+args       none                      --device none -ngl 0
+ctx        4096                      same
+threads    4/10                      same
+machine    Apple M5, 32 GB           same
+os         macOS 26.5.1              same
+
+rates (warm mid), tok/s:
+  prefill         588.0        26.8   A 21.9x faster
+  decode           21.1        12.2   A 1.7x faster
+  wallclock        15.5         3.0   A 5.2x faster
+
+SUSPECT: placement. A ran 33/33 layers on GPU, B ran 0/33 layers
+  on GPU. Fix that first; nothing else gets blamed while the first
+  rung differs.

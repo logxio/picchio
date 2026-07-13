@@ -1,0 +1,12 @@
+$ python3 picchio.py verify forged.txt
+picchio verify: forged.txt
+  model     Qwen3.5-9B-Q4_K_M.gguf
+  claim     ENGAGED (full gpu), headline HEALTHY
+  signature prefill 26.8 = 2.2x decode 12.2, wallclock 3.0
+  os        gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W
+VERDICT: FLAG. 2 physical contradictions in this block:
+  - claims full gpu but prefill is only 2.2x decode, a cpu shaped
+    ratio (a real gpu run is 20x+)
+  - claims full gpu but its own os line saw the gpu at 5% while
+    the tokens were made
+This block contradicts itself; do not trust its numbers as one run.

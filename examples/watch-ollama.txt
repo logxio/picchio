@@ -1,0 +1,8 @@
+$ python3 picchio.py watch --engine ollama --for 8
+picchio watch: ollama model qwen3.5:9b
+  window   8.1 s, 33 samples at 4 Hz  (whole gpu)
+  gpu      work 98% median, peak 98%, 10.6 W
+  memory   7.2 GiB in use by the gpu
+GPU BUSY: something is running kernels on the gpu (work 98%
+  median, peak 98%, 10.6 W). ioreg meters the whole gpu, so this
+  is machine level, not pinned to ollama model qwen3.5:9b.

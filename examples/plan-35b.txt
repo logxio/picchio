@@ -1,0 +1,10 @@
+picchio plan: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+  weights     20.6 GiB   the file itself
+  kv cache     0.1 GiB   at ctx 4096, 10 of 40 layers attend
+  compute      0.5 GiB   graph buffer, measured constant
+  need        21.2 GiB
+  budget      25.0 GiB   metal working set, 0.78 of 32 GB ram
+  verdict         fits   85% of budget
+  speed: no estimate for a mixture of experts; each
+  token reads only the active experts, so file size
+  arithmetic would lie about it.

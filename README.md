@@ -4,6 +4,8 @@
 
 <h1>picchio</h1>
 
+<p>One Python file that measures local LLMs.</p>
+
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f" alt="license: MIT"></a>
@@ -93,7 +95,8 @@ weight, a mix of five tensor types from 4.50 to 32.00 bits, and
 the header's own byte offsets have to audit to the same total
 before the card prints. The same Qwen3.5-9B under the same Q4_K_M
 label measures 5.02 to 5.27 bits per weight across four
-quantizers. The KV cache dtype is not in the file; the card cites
+quantizers, on the 427 tensors all four files share
+([examples/quantizers/](examples/quantizers/)). The KV cache dtype is not in the file; the card cites
 the last run measured here. On a mixture of experts it reports how
 many experts wake per token
 ([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about
@@ -126,24 +129,6 @@ Same machine, same model, same file, forced to CPU
 <p align="center">
 <img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block in a terminal: NOT ENGAGED 0/33 layers, OS meter flat, verdict SILENT CPU FALLBACK, WHY line naming the forcing flags">
 </p>
-
-```
-model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
-gpu      NOT ENGAGED: 0/33 layers on GPU [--device none -ngl 0]
-os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W
-ctx 4096         prefill         decode      wallclock
-  cold        22.8 tok/s      9.3 tok/s      2.5 tok/s
-  warm mid    26.8 tok/s     12.2 tok/s      3.0 tok/s
-  warm span        27~27      12.0~12.4        3.0~3.0
-where the cold pass went (49.9 s, 4/10 threads, weights cached)
-  load weights    2.1 s  #...........................    4%
-  prefill        33.4 s  ###################.........   67%
-  decode         13.7 s  ########....................   27%
-  engine misc     0.8 s  ............................    2%
-VERDICT: SILENT CPU FALLBACK. Prefill: 93 s per 2500 tokens.
-WHY: forced by flag: --device none -ngl 0
--- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1
-```
 
 Decode barely dropped, but prefill fell 22x. The WHY line names
 the first cause the run's own evidence can prove, or says unknown.

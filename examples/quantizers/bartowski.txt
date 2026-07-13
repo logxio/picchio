@@ -1,0 +1,16 @@
+picchio id: Qwen_Qwen3.5-9B-Q4_K_M.gguf
+  claimed    Q4_K_M (general.file_type; the name agrees)
+  walked     442 tensors, 5 types, priced one by one:
+    q4_K      125 tensors   4.50 bits   53.0% of weight bytes
+    q6_K       49 tensors   6.56 bits   37.0% of weight bytes
+    q8_0       20 tensors   8.50 bits    7.7% of weight bytes
+    q5_K       16 tensors   5.50 bits    1.9% of weight bytes
+    f32       232 tensors  32.00 bits    0.5% of weight bytes
+  effective  5.36 bits per weight: 6,158,372,864 tensor bytes over
+             9,197,093,888 weights; the header's own offsets audit
+             to the same byte total
+  kv cache   a runtime choice, not in the model. K f16, V f16 on
+             the last measured run here (Qwen3.5-9B Q4_K_M,
+             2026-07-14); -ctk / -ctv move it per run
+
+[evidence note: header from a 16 MiB Range download; total size 6169341984 from the HF paths-info api; source bartowski/Qwen_Qwen3.5-9B-GGUF / Qwen_Qwen3.5-9B-Q4_K_M.gguf]

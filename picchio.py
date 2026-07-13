@@ -3012,6 +3012,30 @@ def selftest():
             and plan_est_decode(bw, 10 * gib, True) is None \
             and mbw is None and "mixture of experts" in mnote:
         pl_ok += 1
+    # argv split: the `--` passthrough is cut by hand before argparse,
+    # so its semantics cannot vary with the interpreter (3.9.6 and
+    # 3.12.3 rejected an option followed by `--` as unrecognized
+    # arguments, measured; 3.12.13 and 3.13+ accept it). The command
+    # shapes users actually type:
+    av_ok, av_all = 0, 4
+    # 1: options before the separator stay with picchio, engine args
+    #    after it arrive verbatim (the exact shape old argparse rejects)
+    if split_engine_args(["m.gguf", "--keep-logs", "d", "--", "-ngl", "0"]) \
+            == (["m.gguf", "--keep-logs", "d"], ["-ngl", "0"]):
+        av_ok += 1
+    # 2: no separator, trailing junk stays put for the unexpected
+    #    extra arguments error, never silently swallowed as engine args
+    if split_engine_args(["m.gguf", "foo", "bar"]) \
+            == (["m.gguf", "foo", "bar"], None):
+        av_ok += 1
+    # 3: no separator at all: nothing moves, None says none was typed
+    if split_engine_args(["m.gguf"]) == (["m.gguf"], None):
+        av_ok += 1
+    # 4: only the first separator splits; any later one belongs to the
+    #    engine command line untouched
+    if split_engine_args(["m.gguf", "--", "-a", "--", "-b"]) \
+            == (["m.gguf"], ["-a", "--", "-b"]):
+        av_ok += 1
     # onboarding: the zero-argument entry decision is pure given what the
     # scan found, whether a terminal is attached, and what gets typed. The
     # four paths plus the two edges, none of them touching a tty or a gpu
@@ -3061,18 +3085,34 @@ def selftest():
         gd_ok += 1
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
           "telemetry {}/{}, verify {}/{}, watch {}/{}, sweep {}/{}, "
-          "server {}/{}, plan {}/{}, onboarding {}/{}".format(
+          "server {}/{}, plan {}/{}, argv {}/{}, onboarding {}/{}".format(
               fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all, te_ok, te_all,
               ve_ok, ve_all, wa_ok, wa_all, sw_ok, sw_all, sv_ok, sv_all,
-              pl_ok, pl_all, gd_ok, gd_all))
+              pl_ok, pl_all, av_ok, av_all, gd_ok, gd_all))
     sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
              and cp_ok == cp_all and te_ok == te_all
              and ve_ok == ve_all and wa_ok == wa_all
              and sw_ok == sw_all and sv_ok == sv_all
-             and pl_ok == pl_all and gd_ok == gd_all else 1)
+             and pl_ok == pl_all and av_ok == av_all
+             and gd_ok == gd_all else 1)
 
 
 # -------------------------------------------------------------------- main
+
+def split_engine_args(argv):
+    """Everything after the first bare `--` goes to the engine
+    verbatim, and argparse never sees the separator. Splitting by hand
+    is what keeps the passthrough identical on every Python: whether
+    argparse itself honors a `--` that follows an option flipped
+    between CPython versions (measured here: 3.9.6 and 3.12.3 reject
+    "MODEL --keep-logs D -- -ngl 0" as unrecognized arguments, 3.12.13
+    and 3.13+ accept it). Returns (argv_before, engine_args), with
+    engine_args None when no separator was typed at all."""
+    if "--" not in argv:
+        return argv, None
+    cut = argv.index("--")
+    return argv[:cut], argv[cut + 1:]
+
 
 def save_cache(payload):
     try:
@@ -3205,7 +3245,8 @@ def main():
     ap.add_argument("extra", nargs="*", default=[],
                     help="args after -- go straight to the llama.cpp engine "
                          "(e.g. -- --device none -ngl 0)")
-    args = ap.parse_args()
+    argv, engine_args = split_engine_args(sys.argv[1:])
+    args = ap.parse_args(argv)
 
     if args.selftest:
         selftest()
@@ -3243,10 +3284,13 @@ def main():
             sys.exit(0)
     if args.passes < 2:
         sys.exit("picchio: --passes must be at least 2 (one cold, one warm).")
-    if args.extra and "--" not in sys.argv[1:]:
+    if args.extra:
+        # argparse never sees a `--` anymore, so whatever landed in the
+        # extra positional is stray junk, not engine args
         sys.exit("picchio: unexpected extra arguments: {}\n"
                  "(a pasted trailing comment does this; engine args need "
                  "a bare -- first)".format(" ".join(args.extra)))
+    args.extra = engine_args or []
 
     mach = machine_info()
     logdir = args.keep_logs

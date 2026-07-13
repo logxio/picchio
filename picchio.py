@@ -1380,11 +1380,16 @@ def diagnose(cold, rep, mode, tele=None):
             stepped = mb and tele.get("mem_step") is not None \
                 and tele["mem_step"] >= 0.5 * mb
             if not stepped:
+                # cost sentence first: the renderer drops sentences from
+                # the end under the 15 line budget, the WHY line already
+                # carries the evidence, and the 89 char evidence sentence
+                # cannot survive a one line squeeze (the 4090 retest cut
+                # it mid word as "eviden..")
                 para = ("This build printed no gpu evidence and the "
                         "gpu stayed idle while the tokens were made.")
                 if wait_s:
-                    para += " Prefill: {:.0f} s per 2500 tokens.".format(
-                        wait_s)
+                    para = "Prefill: {:.0f} s per 2500 tokens. ".format(
+                        wait_s) + para
                 return "SILENT CPU FALLBACK", para
         return "NO PLACEMENT EVIDENCE", (
             "This build did not report layer placement, so picchio cannot "

@@ -4,11 +4,9 @@
 
 <h1>picchio</h1>
 
-<p>The same Q4_K_M model measures 5.02 to 5.27 bits per weight,
-depending on who quantized it. The same run measures 6763 and 25
-tok/s, depending on the lane you quote. And the GPU may not have
-done the work at all. One Python file that measures what you
-actually have, and what it actually did.</p>
+<p>Four quantizers, one Q4_K_M label: 5.02 to 5.27 bits per weight.
+One run: 6763 tok/s in one lane, 25 in another. One Python file
+that measures what you have, what a run did, and where it ran.</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>

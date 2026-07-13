@@ -148,7 +148,9 @@ models. `picchio id MODEL` walks the gguf tensor table and prices
 every tensor by its ggml type: our own Q4_K_M measures 5.07 bits
 per weight, a mix of five tensor types from 4.50 to 32.00 bits,
 and the header's own byte offsets have to audit to the same total
-before the card prints. The card also cites the KV cache dtype
+before the card prints. The same Qwen3.5-9B under the same Q4_K_M
+label measures 5.02 to 5.27 bits per weight across four
+quantizers. The card also cites the KV cache dtype
 from the last run measured here, because the file does not carry
 that choice, and on a mixture of experts it reports how many
 experts wake per token ([examples/id-35b.txt](examples/id-35b.txt)

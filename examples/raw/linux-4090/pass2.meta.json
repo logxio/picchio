@@ -1,0 +1,6 @@
+{
+ "wall_s": 5.273345019668341,
+ "engine": "llama.cpp llama-completion",
+ "model_name": "model.gguf",
+ "extra_args": []
+}

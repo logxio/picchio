@@ -1,0 +1,1 @@
+{"case":"cuda-partial","exit":0,"wall_s":115,"cmd":"llama-completion -m model.gguf -f prompt.txt -n 128 --ignore-eos --seed 7 --verbose -ngl 10"}

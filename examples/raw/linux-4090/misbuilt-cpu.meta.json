@@ -1,0 +1,1 @@
+{"case":"misbuilt-cpu","exit":0,"wall_s":179,"cmd":"llama-completion -m model.gguf -f prompt.txt -n 128 --ignore-eos --seed 7 --verbose "}

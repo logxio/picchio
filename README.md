@@ -61,7 +61,7 @@ a .gguf path (`python3 picchio.py /path/to/model.gguf`) gets the
 full llama.cpp diagnosis, an ollama tag (`python3 picchio.py
 qwen3.5:9b`) gets measurement mode.
 
-No pip, no dependencies, no config. One Python file, 3432 lines,
+No pip, no dependencies, no config. One Python file, 3728 lines,
 stdlib only; python3 plus either llama.cpp or ollama is everything
 it needs. It runs your model three times with a fixed prompt (the
 first pass cold, the rest warm), reads the engine's own numbers
@@ -181,10 +181,11 @@ the matrix did surface was this silent fallback.
 
 ## The os line
 
-While the passes run on macOS, a background thread reads the OS's
-own GPU accounting (`ioreg`, 4 Hz) and GPU power from the same
-energy counters `powermetrics` reports, minus the sudo: the `os`
-line. HEALTHY requires the engine's log, the OS meter and the
+While the passes run, a background thread reads the OS's own GPU
+accounting: on macOS `ioreg` at 4 Hz plus GPU power from the same
+energy counters `powermetrics` reports, minus the sudo, and on
+Linux with an NVIDIA gpu the driver's own NVML meter. That is the
+`os` line. HEALTHY requires the engine's log, the OS meter and the
 speed signature to agree; a full offload claim over a GPU the OS
 saw stay flat gets CONFLICTING EVIDENCE (exit 5). A missing source
 abstains, and the line says which evidence is left.
@@ -250,8 +251,9 @@ picchio on a machine that is otherwise idle.
   ollama) plus one rented Linux RTX 4090, where the CUDA parsing
   and the verdict held. ollama on Linux and Vulkan log lines have
   not touched real hardware; if you run those, I want the verdict
-  block either way. The os line does not sample on Linux yet, so a
-  Linux verdict rests on the engine log and the speed signature.
+  block either way. The Linux os line reads NVML, whose utilization
+  figure updates on the driver's own period (up to a second), and
+  it reads gpu index 0 only; multi gpu selection is not built.
 - The full verdict block, with its three lanes and cold-start
   breakdown, is llama.cpp and ollama only. MLX, LM Studio and other
   engines get placement truth through `watch`, not the lane table.

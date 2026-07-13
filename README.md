@@ -60,7 +60,7 @@ a .gguf path (`python3 picchio.py /path/to/model.gguf`) gets the
 full llama.cpp diagnosis, an ollama tag (`python3 picchio.py
 qwen3.5:9b`) gets measurement mode.
 
-No pip, no dependencies, no config. One Python file, 2655 lines,
+No pip, no dependencies, no config. One Python file, 2928 lines,
 stdlib only; python3 plus either llama.cpp or ollama is everything
 it needs. It runs your model three times with a fixed prompt (the
 first pass cold, the rest warm), reads the engine's own numbers
@@ -87,6 +87,7 @@ picchio verify [FILE]
 picchio watch [PID] [--engine ollama] [--for SEC]
 
 MODEL            a .gguf path (llama.cpp) or an ollama model tag;
+                 an http(s) url measures a llama-server already up;
                  with no arguments, finds your models and asks
                  which to run (prints commands when not a terminal)
 guard            wrap your own llama.cpp command: warn on degraded
@@ -290,6 +291,41 @@ layer placement, device init logs, thread configuration. llama.cpp
 mode is the full diagnosis; ollama mode is measurement plus a
 placement check (unknown when no memory split is reported). The
 three way judgment applies unchanged.
+
+## Llama-server mode
+
+Give picchio the url of a llama-server you already have running and
+it measures that server over its own http api. Nothing is launched
+and nothing on the server is changed; the passes are ordinary
+`/completion` requests. Real run against this machine's server
+([examples/server-endpoint.txt](examples/server-endpoint.txt)):
+
+```
+model    Qwen3.5-9B-Q4_K_M.gguf, llama-server b9430-d48a56eff
+gpu      NO EVIDENCE (the server api exposes no placement)
+os       gpu idle 0%, work 99%, mem +0.3 GiB, 11.0 W
+ctx 4096         prefill         decode      wallclock
+  warm mid   567.7 tok/s     21.3 tok/s     17.4 tok/s
+  warm span      566~570      21.2~21.4      17.3~17.5
+cold start not measured: the server already owned the weights
+VERDICT: HEALTHY. The os meter saw the gpu work at 99% and
+  prefill ran 27x decode, gpu shaped: the gpu did the work.
+  Quote the warm median decode: 21.3 tok/s.
+-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1
+```
+
+There is no cold row: the server keeps its weights loaded, so a
+cold pass does not exist in this mode, and the block says so
+instead of printing one. Each pass asks the server for a full
+prompt read (prompt caching turned off per request), so the warm
+prefill number is a real read, not a cache hit.
+
+The server api reports no layer counts, so the gpu line says NO
+EVIDENCE and placement is judged from the two witnesses that need
+no engine claim, the os meter and the speed signature. On a remote
+url the os line says not sampled and the judgment rests on timing
+alone; the footer names the machine picchio ran on, not the server,
+and wallclock includes the network round trip.
 
 ## Guard mode
 

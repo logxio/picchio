@@ -60,7 +60,7 @@ a .gguf path (`python3 picchio.py /path/to/model.gguf`) gets the
 full llama.cpp diagnosis, an ollama tag (`python3 picchio.py
 qwen3.5:9b`) gets measurement mode.
 
-No pip, no dependencies, no config. One Python file, 2928 lines,
+No pip, no dependencies, no config. One Python file, 3388 lines,
 stdlib only; python3 plus either llama.cpp or ollama is everything
 it needs. It runs your model three times with a fixed prompt (the
 first pass cold, the rest warm), reads the engine's own numbers
@@ -85,6 +85,7 @@ picchio guard [--keep-logs DIR] -- <command...>
 picchio compare A.txt B.txt
 picchio verify [FILE]
 picchio watch [PID] [--engine ollama] [--for SEC]
+picchio plan [MODEL]
 
 MODEL            a .gguf path (llama.cpp) or an ollama model tag;
                  an http(s) url measures a llama-server already up;
@@ -98,6 +99,9 @@ verify           re-derive a pasted block's own physics and flag it
                  when its sources contradict each other
 watch            point the OS GPU meter at a process or the whole GPU
                  and report placement, no engine log parsing (macOS)
+plan             will it fit, read from the gguf header against this
+                 machine's memory budget; adds a labeled decode
+                 estimate once one diagnosis has been measured here
 --passes N       measurement passes, first one cold (default 3)
 --ctx-sweep LIST re-measure the lanes at each context depth in LIST
                  (default 4096,16384,32768) and report the decay slope
@@ -432,6 +436,55 @@ SLOPE: decode fell 11% from 2531 to 21079 tokens (8x deeper): 20.0
 
 Prefill fell 30% too, and the depth column is the token count the
 engine actually reached, not the `-c` ceiling.
+
+## Plan
+
+`picchio plan` is the capacity account before the download: will
+this model fit this machine, and, once calibrated, an estimate of
+how fast it will decode. It reads the geometry straight from the
+GGUF header (or from ollama's copy of it for a tag) and prices the
+memory line by line; with no argument it accounts every model found
+on this machine. Real output for the 35B file:
+
+```
+picchio plan: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+  weights     20.6 GiB   the file itself
+  kv cache     0.1 GiB   at ctx 4096, 10 of 40 layers attend
+  compute      0.5 GiB   graph buffer, measured constant
+  need        21.2 GiB
+  budget      25.0 GiB   metal working set, 0.78 of 32 GB ram
+  verdict         fits   85% of budget
+  speed: no estimate for a mixture of experts; each
+  token reads only the active experts, so file size
+  arithmetic would lie about it.
+```
+
+The speed column exists only after this machine has measured at
+least one real run: run one diagnosis and plan gains a decode
+estimate calibrated by that run. Until then plan gives the fit
+verdict and refuses to give a speed. Estimates are always labeled
+as estimates, never appear inside a verdict block, and a mixture
+of experts is never priced. The same machine after one 9B
+diagnosis:
+
+```
+picchio plan: 2 models on this machine
+budget 25.0 GiB (metal working set, 0.78 of 32 GB ram)
+kv counted at ctx 4096
+
+  model                              need   fit    est decode
+  qwen3.6:35b-a3b                21.2 GiB   fits   n/a (moe)
+  qwen3.5:9b                      5.9 GiB   fits   ~19.8 tok/s
+
+every est decode figure is an estimate projected from one measured
+  run (calibrated by Qwen3.5-9B-Q4_K_M.gguf at 19.9 tok/s decode),
+  not a measurement
+```
+
+The kv line honors hybrid attention layouts and matched the
+engine's own allocation on both local models; the budget fraction
+and the compute constant come from measured runs on this machine
+and are named in the output.
 
 ## Not just llama-bench
 

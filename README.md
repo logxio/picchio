@@ -16,7 +16,9 @@ actually get, and did the GPU really do the work?</p>
 
 <p><a href="#get-it-running">Install</a> · <a href="#commands">Commands</a> · <a href="#the-three-numbers">What it checks</a> · <a href="#compare-two-blocks">Compare</a> · <a href="#guard-mode">Guard</a> · <a href="examples/">Examples</a></p>
 
-<img src="assets/healthy-verdict.svg" width="600" alt="picchio verdict block in a terminal: GPU ENGAGED 33/33 layers, OS meter at 99% utilization, verdict HEALTHY">
+<img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: python3 picchio.py finds two models, runs three passes, and prints the 15 line verdict block, verdict HEALTHY">
+
+<p>A real run, replayed. Time compressed.</p>
 
 </div>
 

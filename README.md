@@ -4,9 +4,9 @@
 
 <h1>picchio</h1>
 
-<p>Picchio is Italian for woodpecker: one Python file that answers
-two questions about your local LLM setup: which tok/s did you
-actually get, and did the GPU really do the work?</p>
+<p>One Python file that answers two questions about your local LLM
+setup: which tok/s did you actually get, and did the GPU really do
+the work?</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -126,8 +126,9 @@ how fast the model reads your prompt; decode (tg or eval) is how
 fast it writes the answer; wallclock is generated tokens divided by
 everything, load and warmup included, which is what your stopwatch
 measures. In the block above the warm medians land at 588, 21.1 and
-15.5; on the CPU run below they land at 27, 12 and 3. A tok/s
-number without its lane label cannot be compared with anything.
+15.5; on the CPU run below they land at 27, 12 and 3; on the rented
+4090 the same model lands at 6763, 138 and 25. A tok/s number
+without its lane label cannot be compared with anything.
 
 <p align="center">
 <img src="assets/prefill-decode-asymmetry.svg" width="600" alt="prefill collapses 22x from GPU to CPU while decode only drops 1.7x on the same model and file">
@@ -206,7 +207,8 @@ run. Measured on this machine, same model, same day:
 
 Both rows report the same backend, because that column describes
 what the binary was compiled with, not where your tokens were
-computed. The 21x prompt side collapse is the CPU run's only
+computed. The rented 4090 shows the same behavior: its CUDA build
+keeps `CUDA` in that column at `-ngl 0`. The 21x prompt side collapse is the CPU run's only
 visible trace, readable only if you already know the healthy
 baseline; there is no load time, no cold/warm split, no verdict.
 picchio reports that layer: placement, cold start, and a verdict.

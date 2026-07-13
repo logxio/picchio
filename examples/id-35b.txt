@@ -1,0 +1,16 @@
+picchio id: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+  claimed    Q4_K_M (general.file_type; the name agrees)
+  walked     733 tensors, 5 types, priced one by one:
+    q4_K       80 tensors   4.50 bits   54.6% of weight bytes
+    q5_K       37 tensors   5.50 bits   30.9% of weight bytes
+    q8_0      251 tensors   8.50 bits    9.2% of weight bytes
+    q6_K        4 tensors   6.56 bits    4.9% of weight bytes
+    f32       361 tensors  32.00 bits    0.5% of weight bytes
+  effective  5.11 bits per weight: 22,123,538,944 tensor bytes
+             over 34,660,610,688 weights; the header's own offsets
+             audit to the same byte total
+  kv cache   a runtime choice, not in the model. K f16, V f16 on
+             the last measured run here (Qwen3.5-9B Q4_K_M,
+             2026-07-14); -ctk / -ctv move it per run
+  experts    8 of 256 wake per token: about 3.5B of the 34.7B
+             weights are read for any one token

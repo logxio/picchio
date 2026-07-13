@@ -61,7 +61,7 @@ a .gguf path (`python3 picchio.py /path/to/model.gguf`) gets the
 full llama.cpp diagnosis, an ollama tag (`python3 picchio.py
 qwen3.5:9b`) gets measurement mode.
 
-No pip, no dependencies, no config. One Python file, 3746 lines,
+No pip, no dependencies, no config. One Python file, 4180 lines,
 stdlib only; python3 plus either llama.cpp or ollama is everything
 it needs. It runs your model three times with a fixed prompt (the
 first pass cold, the rest warm), reads the engine's own numbers
@@ -90,6 +90,7 @@ verdict block line for line; the badge runs it on every push.
 | `picchio verify FILE` | flags a pasted block whose own numbers contradict each other | [example](examples/verify-forged.txt) |
 | `picchio watch [PID]` | points the OS GPU meter at a process or the whole GPU, no engine log parsing (macOS) | [example](examples/watch-ollama.txt) |
 | `picchio plan [MODEL]` | will it fit, priced from the gguf header; a decode estimate appears once one run is measured | [example](examples/plan-35b.txt) |
+| `picchio id MODEL` | splits the quant label: per tensor type mix, effective bits per weight, KV dtype, experts | [example](examples/id-35b.txt) |
 | `picchio --explain 36` | classifies a number you saw against the lanes measured here (cached rates, no rerun) | [example](examples/explain-36.txt) |
 | `picchio model.gguf --ctx-sweep` | re-measures the lanes at several context depths and reports the decay slope | [example](examples/ctx-sweep.txt) |
 
@@ -139,6 +140,20 @@ prefill and under 2x on decode (both runs are in
 Nearly every figure posted online is decode, but prefill sets the
 time to first token on a long prompt: a Mac screenshot showing 500
 tok/s is almost always prefill.
+
+## The quant label
+
+Two people can both say they run 4bit and be running different
+models. `picchio id MODEL` walks the gguf tensor table and prices
+every tensor by its ggml type: our own Q4_K_M measures 5.07 bits
+per weight, a mix of five tensor types from 4.50 to 32.00 bits,
+and the header's own byte offsets have to audit to the same total
+before the card prints. The card also cites the KV cache dtype
+from the last run measured here, because the file does not carry
+that choice, and on a mixture of experts it reports how many
+experts wake per token ([examples/id-35b.txt](examples/id-35b.txt)
+reads 8 of 256, about 3.5B of 34.7B weights per token). Works on
+a .gguf path or an ollama tag, read only, exit 0.
 
 ## Silent CPU fallback
 

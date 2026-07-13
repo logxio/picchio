@@ -97,6 +97,7 @@ verdict block line for line; the badge runs it on every push.
 --passes N       measurement passes, first one cold (default 3)
 --keep-logs DIR  save each pass's raw engine output into DIR, plus
                  the sampled GPU curve (telemetry.json) on macOS
+                 and on NVIDIA Linux
 --no-telemetry   skip the OS-side GPU sampling; the os line then
                  says the verdict rests on engine+timing only
 --json           machine readable measurements after the block
@@ -187,8 +188,13 @@ energy counters `powermetrics` reports, minus the sudo, and on
 Linux with an NVIDIA gpu the driver's own NVML meter. That is the
 `os` line. HEALTHY requires the engine's log, the OS meter and the
 speed signature to agree; a full offload claim over a GPU the OS
-saw stay flat gets CONFLICTING EVIDENCE (exit 5). A missing source
-abstains, and the line says which evidence is left.
+saw stay flat gets CONFLICTING EVIDENCE (exit 5). On an NVIDIA
+machine, a build that prints no gpu evidence at all while the
+meter watches the gpu stay idle gets SILENT CPU FALLBACK (exit 4),
+measured on a real mis-built binary
+([examples/linux-4090.txt](examples/linux-4090.txt) is the healthy
+side of that box). A missing source abstains, and the line says
+which evidence is left.
 
 ## Not just llama-bench
 
@@ -217,8 +223,8 @@ three passes, the first one cold. That protocol is named in every
 block footer (mp1); if it ever changes the tag changes. Every
 number came out of a real run on the machine in its row, the lane
 columns hold warm medians, and the raw engine output behind the
-first three rows sits in [examples/raw/](examples/raw/), written by
-`--keep-logs`.
+first three rows and the 4090 row sits in
+[examples/raw/](examples/raw/), written by `--keep-logs`.
 
 | machine         | model, engine                      | protocol | prefill | decode | wallclock | verdict             |
 |-----------------|------------------------------------|----------|--------:|-------:|----------:|---------------------|
@@ -230,7 +236,7 @@ first three rows sits in [examples/raw/](examples/raw/), written by
 | RTX 4090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      |  6763.3 |  138.0 |      25.2 | HEALTHY             |
 | your machine    |                                    |          |         |        |           |                     |
 
-I only own one computer (the 4090 was rented for an afternoon to
+I only own one computer (the 4090 is rented by the hour to
 exercise the Linux path), which is why this table is mostly missing.
 Run picchio once and paste the verdict block into an issue, even if
 it says everything is fine; a boring HEALTHY on hardware I do not
@@ -248,8 +254,9 @@ picchio on a machine that is otherwise idle.
 ## Limits
 
 - The tested path is one Apple Silicon machine (llama.cpp and
-  ollama) plus one rented Linux RTX 4090, where the CUDA parsing
-  and the verdict held. ollama on Linux and Vulkan log lines have
+  ollama) plus one rented Linux RTX 4090, where the CUDA parsing,
+  the NVML os line and the verdict held on two driver majors (550,
+  580). ollama on Linux and Vulkan log lines have
   not touched real hardware; if you run those, I want the verdict
   block either way. The Linux os line reads NVML, whose utilization
   figure updates on the driver's own period (up to a second), and
@@ -278,9 +285,10 @@ picchio on a machine that is otherwise idle.
   More passes (`--passes 5`) tighten a single reading.
 - The os meter counts the whole GPU, not one process, so it only
   judges runs that started from an idle GPU.
-- The watts come from a private macOS framework (the same counters
-  powermetrics prints); an OS update can move it, in which case the
-  watts drop off the line and everything else keeps working.
+- On macOS the watts come from a private framework (the same
+  counters powermetrics prints); an OS update can move it, in which
+  case the watts drop off the line and everything else keeps
+  working. The Linux watts come from NVML, a public api.
 
 ## License
 

@@ -4,7 +4,7 @@
 
 <h1>picchio</h1>
 
-<p>One Python file that measures local LLMs.</p>
+<p>One Python file that measures local LLMs: effective bits per weight, the three tok/s lanes, and silent CPU fallback.</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#install">Install</a> · <a href="#commands">Commands</a> · <a href="#three-lanes">Lanes</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
+<p><a href="#install">Install</a> · <a href="#the-quant-label">Quant</a> · <a href="#three-lanes">Lanes</a> · <a href="#commands">Commands</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
 
 <img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: python3 picchio.py finds two models, runs three passes, and prints the 15 line verdict block, verdict HEALTHY">
 
@@ -21,9 +21,20 @@
 </div>
 
 Most GPU speed claims are one tok/s number. That number can be
-correct and still tell you the wrong story. picchio splits
-prefill, decode and wallclock, reads the engine's log against the
-OS's GPU meter, and says whether the GPU did the work.
+correct and still tell you the wrong story. Three of those
+stories, measured here, each one command:
+
+- Four quantizations of the same Qwen3.5-9B, all labeled Q4_K_M,
+  measure 5.02, 5.07 and 5.27 bits per weight
+  ([the quant label](#the-quant-label)).
+- Losing the GPU cost prefill 22x and decode under 2x on the same
+  model and file ([three lanes](#three-lanes)).
+- The 36 tok/s I remembered from bare llama.cpp reproduced in no
+  cell of a 32 cell matrix ([silent CPU fallback](#silent-cpu-fallback)).
+
+picchio splits prefill, decode and wallclock, reads the engine's
+log against the OS's GPU meter, and prints a verdict that says
+whether the GPU did the work, and why.
 
 ## Install
 
@@ -37,14 +48,76 @@ folder, the HF and LM Studio caches) and runs the one you pick. A
 .gguf path gets the full llama.cpp diagnosis; an ollama tag gets
 measurement mode.
 
-One Python file, stdlib only; needs python3 and either llama.cpp
-or ollama. Three passes with a fixed prompt, the first one cold.
+Needs python3 and either llama.cpp or ollama. Three passes with a
+fixed prompt, the first one cold.
 About a minute here with the GPU engaged, a few minutes on CPU. It
 writes one cache file under `~/.cache/picchio` and nothing else.
 
 `python3 picchio.py --selftest` replays the raw engine logs in
 [examples/raw/](examples/raw/) and must reproduce every committed
 verdict block line for line; the badge runs it on every push.
+
+## The quant label
+
+`picchio id MODEL` walks the gguf tensor table and prices every
+tensor by its ggml type. Our own Q4_K_M measures 5.07 bits per
+weight, a mix of five tensor types from 4.50 to 32.00 bits, and
+the header's own byte offsets have to audit to the same total
+before the card prints. The same Qwen3.5-9B under the same Q4_K_M
+label measures 5.02, 5.02, 5.07 and 5.27 bits per weight across
+four quantizers, on the 427 tensors all four files share
+([examples/quantizers/](examples/quantizers/)). The KV cache dtype is not in the file; the card cites
+the last run measured here. On a mixture of experts it reports how
+many experts wake per token
+([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about
+3.5B of 34.7B weights per token). Works on a .gguf path or
+an ollama tag, read only, exit 0.
+
+## Three lanes
+
+Prefill (elsewhere called prompt processing or pp) is
+how fast the model reads your prompt; decode (tg or eval) is how
+fast it writes the answer; wallclock is generated tokens divided by
+everything, load and warmup included.
+
+<p align="center">
+<img src="assets/prefill-decode-asymmetry.svg" width="600" alt="prefill collapses 22x from GPU to CPU while decode only drops 1.7x on the same model and file">
+</p>
+
+The lanes fail separately; the chart is two real runs from
+[examples/](examples/), 4 of 10 cpu threads on the CPU side.
+Prefill sets the time to first token on a long prompt. A Mac
+screenshot showing 500 tok/s is almost always prefill.
+
+## Silent CPU fallback
+
+Same machine, same model, same file, forced to CPU
+([examples/cpu-fallback.txt](examples/cpu-fallback.txt)):
+
+<p align="center">
+<img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block in a terminal: NOT ENGAGED 0/33 layers, OS meter flat, verdict SILENT CPU FALLBACK, WHY line naming the forcing flags">
+</p>
+
+The WHY line names the first cause the run's own evidence can
+prove, or says unknown.
+
+While measuring local models for an app I am building, weeks of
+it, bare llama.cpp gave me 36 tok/s and the same model through the
+app gave 11.5: that gap is why this repo exists. A 32 cell matrix
+across CPU and GPU, cold and warm, reproduced the 36 in no cell, a
+rate from a different lane remembered as generation speed. What
+the matrix did surface was this silent fallback.
+
+## The os line
+
+While the passes run, a background thread reads the OS's own GPU
+meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
+counters, minus the sudo; on NVIDIA Linux, the driver's NVML. That
+is the `os` line. A full offload claim over a GPU the OS saw stay
+flat is CONFLICTING EVIDENCE (exit 5). A build that prints no gpu
+evidence while the meter watches the gpu stay idle is SILENT CPU
+FALLBACK (exit 4), measured on a real mis-built binary. A missing
+source abstains; the line says which evidence is left.
 
 ## Commands
 
@@ -86,70 +159,6 @@ evidence. guard passes the wrapped command's own exit code through
 once both blocks parse; verify exits 0 when a block is
 self-consistent, 5 when its sources fight; watch exits 0 when the
 GPU is working, 4 when it sits idle.
-
-## The quant label
-
-`picchio id MODEL` walks the gguf tensor table and prices every
-tensor by its ggml type. Our own Q4_K_M measures 5.07 bits per
-weight, a mix of five tensor types from 4.50 to 32.00 bits, and
-the header's own byte offsets have to audit to the same total
-before the card prints. The same Qwen3.5-9B under the same Q4_K_M
-label measures 5.02 to 5.27 bits per weight across four
-quantizers, on the 427 tensors all four files share
-([examples/quantizers/](examples/quantizers/)). The KV cache dtype is not in the file; the card cites
-the last run measured here. On a mixture of experts it reports how
-many experts wake per token
-([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about
-3.5B of 34.7B weights per token). Works on a .gguf path or
-an ollama tag, read only, exit 0.
-
-## Three lanes
-
-Prefill (elsewhere called prompt processing or pp) is
-how fast the model reads your prompt; decode (tg or eval) is how
-fast it writes the answer; wallclock is generated tokens divided by
-everything, load and warmup included.
-
-<p align="center">
-<img src="assets/prefill-decode-asymmetry.svg" width="600" alt="prefill collapses 22x from GPU to CPU while decode only drops 1.7x on the same model and file">
-</p>
-
-The lanes fail separately. Measured here, the GPU buys about 22x on
-prefill and under 2x on decode (both runs are in
-[examples/](examples/), 4 of 10 cpu threads on the CPU side).
-Nearly every figure posted online is decode, but prefill sets the
-time to first token on a long prompt. A Mac screenshot showing 500
-tok/s is almost always prefill.
-
-## Silent CPU fallback
-
-Same machine, same model, same file, forced to CPU
-([examples/cpu-fallback.txt](examples/cpu-fallback.txt)):
-
-<p align="center">
-<img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block in a terminal: NOT ENGAGED 0/33 layers, OS meter flat, verdict SILENT CPU FALLBACK, WHY line naming the forcing flags">
-</p>
-
-Decode barely dropped, but prefill fell 22x. The WHY line names
-the first cause the run's own evidence can prove, or says unknown.
-
-While measuring local models for an app I am building, weeks of
-it, bare llama.cpp gave me 36 tok/s and the same model through the
-app gave 11.5: that gap is why this repo exists. A 32 cell matrix
-across CPU and GPU, cold and warm, reproduced the 36 in no cell, a
-rate from a different lane remembered as generation speed. What
-the matrix did surface was this silent fallback.
-
-## The os line
-
-While the passes run, a background thread reads the OS's own GPU
-meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
-counters, minus the sudo; on NVIDIA Linux, the driver's NVML. That
-is the `os` line. A full offload claim over a GPU the OS saw stay
-flat is CONFLICTING EVIDENCE (exit 5). A build that prints no gpu
-evidence while the meter watches the gpu stay idle is SILENT CPU
-FALLBACK (exit 4), measured on a real mis-built binary. A missing
-source abstains; the line says which evidence is left.
 
 ## llama-bench
 

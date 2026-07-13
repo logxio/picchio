@@ -4,10 +4,10 @@
 
 <h1>picchio</h1>
 
-<p>GPU acceleration is easy to claim and hard to prove. picchio
-does not trust one tok/s number: it splits prefill, decode and
-wallclock, reads the engine's log against the OS's GPU meter, and
-says whether the GPU did the work.</p>
+<p>Most GPU speed claims are one tok/s number. That number can be
+correct and still tell you the wrong story. picchio splits
+prefill, decode and wallclock, reads the engine's log against the
+OS's GPU meter, and says whether the GPU did the work.</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -15,7 +15,7 @@ says whether the GPU did the work.</p>
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#get-it-running">Install</a> · <a href="#commands">Commands</a> · <a href="#the-three-numbers">What it checks</a> · <a href="#measured-on-this-machine">Measured</a> · <a href="examples/">Examples</a></p>
+<p><a href="#install">Install</a> · <a href="#commands">Commands</a> · <a href="#three-lanes">Lanes</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
 
 <img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: python3 picchio.py finds two models, runs three passes, and prints the 15 line verdict block, verdict HEALTHY">
 
@@ -44,7 +44,7 @@ VERDICT: HEALTHY. The GPU did the work. Quote the warm median
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1
 ```
 
-## Get it running
+## Install
 
 ```
 curl -LO https://raw.githubusercontent.com/logxio/picchio/main/picchio.py
@@ -56,12 +56,10 @@ folder, the HF and LM Studio caches) and runs the one you pick. A
 .gguf path gets the full llama.cpp diagnosis; an ollama tag gets
 measurement mode.
 
-One Python file, stdlib only; python3 plus either llama.cpp or
-ollama is everything it needs. Three passes with a fixed prompt,
-the first one cold: about a minute here with the GPU engaged, a
-few minutes on CPU. It writes one small cache file under
-`~/.cache/picchio`, modifies nothing, and leaves no process
-behind.
+One Python file, stdlib only; needs python3 and either llama.cpp
+or ollama. Three passes with a fixed prompt, the first one cold:
+about a minute here with the GPU engaged, a few minutes on CPU. It
+writes one cache file under `~/.cache/picchio` and nothing else.
 
 `python3 picchio.py --selftest` replays the raw engine logs in
 [examples/raw/](examples/raw/) and must reproduce every committed
@@ -123,7 +121,7 @@ many experts wake per token
 3.5B of 34.7B weights per token). Works on a .gguf path or
 an ollama tag, read only, exit 0.
 
-## The three numbers
+## Three lanes
 
 Prefill (elsewhere called prompt processing or pp) is
 how fast the model reads your prompt; decode (tg or eval) is how
@@ -152,8 +150,6 @@ Same machine, same model, same file, forced to CPU
 <p align="center">
 <img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block in a terminal: NOT ENGAGED 0/33 layers, OS meter flat, verdict SILENT CPU FALLBACK, WHY line naming the forcing flags">
 </p>
-
-The text version:
 
 ```
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
@@ -188,15 +184,13 @@ the matrix did surface was this silent fallback.
 While the passes run, a background thread reads the OS's own GPU
 meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
 counters, minus the sudo; on NVIDIA Linux, the driver's NVML. That
-is the `os` line. HEALTHY requires the engine's log, the OS meter
-and the speed signature to agree; a full offload claim over a GPU
-the OS saw stay flat gets CONFLICTING EVIDENCE (exit 5). A build
-that prints no gpu evidence at all while the meter watches the gpu
-stay idle gets SILENT CPU FALLBACK (exit 4), measured on a real
-mis-built binary. A missing source abstains, and the line says
-which evidence is left.
+is the `os` line. A full offload claim over a GPU the OS saw stay
+flat is CONFLICTING EVIDENCE (exit 5). A build that prints no gpu
+evidence while the meter watches the gpu stay idle is SILENT CPU
+FALLBACK (exit 4), measured on a real mis-built binary. A missing
+source abstains; the line says which evidence is left.
 
-## Not just llama-bench
+## llama-bench
 
 llama-bench answers a different question: steady state pp and tg
 for this machine and model. Measured here, same model, same day:
@@ -211,7 +205,7 @@ column at `-ngl 0`. The 21x prompt side collapse is the CPU run's
 only visible trace; there is no load time, no cold/warm split, no
 verdict.
 
-## Measured on this machine
+## Measured
 
 Apple M5, 32 GB, macOS 26.5.1, llama.cpp build 9430 and ollama
 0.31.1, roughly 730 prompt tokens and 128 generated tokens per pass,
@@ -237,10 +231,10 @@ wrong verdict is the issue I want most:
 [misdiagnosis reports](.github/ISSUE_TEMPLATE/misdiagnosis-report.md)
 go to the top of the pile.
 
-The 35B rows: a 34.7B MoE with about 3B active parameters decodes
-1.6x faster here than the dense 9B, while its 20.6 GiB of weights
-turn the cold start into a load problem: 13 of the first pass's 19
-seconds. A background download cut decode roughly in half.
+The 35B result is mostly a load-time problem: 13 of the first
+pass's 19 seconds went to reading 20.6 GiB of weights. The
+3B-active MoE still decodes 1.6x faster than the dense 9B. A
+background download cut decode roughly in half.
 
 ## Limits
 

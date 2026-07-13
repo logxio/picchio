@@ -1,0 +1,11 @@
+model    Qwen3.5-9B-Q4_K_M.gguf, llama-server b9430-d48a56eff
+gpu      NO EVIDENCE (the server api exposes no placement)
+os       gpu idle 0%, work 99%, mem +0.3 GiB, 11.0 W
+ctx 4096         prefill         decode      wallclock
+  warm mid   567.7 tok/s     21.3 tok/s     17.4 tok/s
+  warm span      566~570      21.2~21.4      17.3~17.5
+cold start not measured: the server already owned the weights
+VERDICT: HEALTHY. The os meter saw the gpu work at 99% and
+  prefill ran 27x decode, gpu shaped: the gpu did the work.
+  Quote the warm median decode: 21.3 tok/s.
+-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

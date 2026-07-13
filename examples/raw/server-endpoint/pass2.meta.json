@@ -1,0 +1,7 @@
+{
+ "wall_s": 7.386911417001102,
+ "engine": "llama-server b9430-d48a56eff",
+ "model_name": "Qwen3.5-9B-Q4_K_M.gguf",
+ "mode": "server",
+ "ctx": 4096
+}

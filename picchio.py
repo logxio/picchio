@@ -19,6 +19,8 @@
 # Usage:
 #   python3 picchio.py /path/to/model.gguf            llama.cpp, full diagnosis
 #   python3 picchio.py qwen3.5:9b                     ollama tag, measurement
+#   python3 picchio.py http://127.0.0.1:8080          llama-server endpoint,
+#                                       measurement of a server already up
 #   python3 picchio.py model.gguf --explain 36        classify a number you saw
 #   python3 picchio.py --explain 36                   same, against last run
 #   python3 picchio.py --selftest                     replay examples/raw
@@ -62,6 +64,7 @@ import textwrap
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 VERSION = "0.1.0"
@@ -539,6 +542,123 @@ def ollama_unload(tag):
         pass
 
 
+# ---------------------------------------------- engine: llama-server (http)
+#
+# A model url instead of a path or tag means a llama-server someone
+# already has running; picchio measures it over its own http api instead
+# of launching anything. The api exposes no layer counts, no memory fit
+# and no init log (checked against /props on b9430: nothing gpu shaped
+# in it), so placement rests on the two witnesses that need no
+# confession, the os meter and the prefill/decode signature. And the
+# server owns its weights for as long as it lives: there is no unload
+# call, so no cold pass exists, and the block says so instead of
+# dressing a warm number as one.
+
+def server_api(url, path, payload=None, timeout=1800):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        url + path, data=data,
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def server_health(url):
+    """GET /health: (True, None) when the server is up with its model
+    loaded, else (False, reason), a still-loading server (it answers
+    503 with an error body) told apart from nothing answering at all."""
+    try:
+        d = server_api(url, "/health", timeout=5)
+        if d.get("status") == "ok":
+            return True, None
+        return False, ("the server at {} answered /health but is not "
+                       "ready: {}".format(url, json.dumps(d)[:120]))
+    except urllib.error.HTTPError:
+        return False, ("the server at {} is still loading its model; "
+                       "try again when /health says ok.".format(url))
+    except (urllib.error.URLError, OSError, ValueError):
+        return False, ("no llama-server answered at {}.\nStart one "
+                       "(llama-server -m model.gguf) or check the "
+                       "url.".format(url))
+
+
+_PROPS_CACHE = {}
+
+
+def server_props(url):
+    """/props, fetched once per url. Fields used here, verified on
+    b9430: model_path, model_alias, build_info, and the per request
+    context under default_generation_settings.n_ctx."""
+    if url not in _PROPS_CACHE:
+        try:
+            _PROPS_CACHE[url] = server_api(url, "/props", timeout=10)
+        except (urllib.error.URLError, OSError, ValueError):
+            _PROPS_CACHE[url] = {}
+    return _PROPS_CACHE[url]
+
+
+def server_ctx(url):
+    """The context size a request to this server actually gets, or '?'
+    when /props does not say; a question mark in the block beats a
+    protocol default the server never promised."""
+    try:
+        return int(server_props(url)["default_generation_settings"]["n_ctx"])
+    except (KeyError, TypeError, ValueError):
+        return "?"
+
+
+def url_is_local(url):
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def map_server(resp, wall_s):
+    """response.timings from /completion, keys verified on b9430:
+    prompt_n / prompt_ms cover the prompt tokens actually evaluated
+    this pass, predicted_n / predicted_ms the generated ones, cache_n
+    the prompt tokens reused from the kv cache instead of evaluated."""
+    d = blank_pass()
+    d["wall_s"] = wall_s
+    t = resp.get("timings") or {}
+    if t.get("prompt_ms") and t.get("prompt_n"):
+        d["prompt_ms"] = float(t["prompt_ms"])
+        d["prompt_tokens"] = int(t["prompt_n"])
+    if t.get("predicted_ms") and t.get("predicted_n"):
+        d["eval_ms"] = float(t["predicted_ms"])
+        d["eval_tokens"] = int(t["predicted_n"])
+    return finish_rates(d)
+
+
+def run_server_pass(url, log_path=None, prompt=BENCH_PROMPT):
+    # cache_prompt false, or the warm passes lie: this build reuses the
+    # prompt kv across requests by default, and the second request then
+    # evaluates 4 of 457 prompt tokens (measured here), which turns the
+    # warm prefill rate into a per call overhead number, the short
+    # prompt trap again. Forcing a full prefill every pass is the same
+    # discipline as the keep_alive:0 unload in ollama mode, applied per
+    # request; the wall clock is picchio's own, wrapped around the call.
+    t0 = time.monotonic()
+    resp = server_api(url, "/completion", {
+        "prompt": prompt,
+        "n_predict": N_PREDICT,
+        "seed": 7,
+        "ignore_eos": True,
+        "cache_prompt": False,
+    })
+    wall_s = time.monotonic() - t0
+    keep_log(log_path, json.dumps(resp, indent=1))
+    t = resp.get("timings") or {}
+    if t.get("cache_n"):
+        sys.stderr.write("picchio: the server reused {} prompt tokens "
+                         "from its cache despite cache_prompt false; "
+                         "prefill is not a full read this pass.\n".format(
+                             t["cache_n"]))
+    if resp.get("truncated"):
+        sys.stderr.write("picchio: the server truncated the prompt to "
+                         "fit its context; rates are not comparable.\n")
+    return map_server(resp, wall_s)
+
+
 # ----------------------------------------------------------- telemetry (os)
 #
 # The engine's stderr is a confession; ioreg is the OS's own meter and
@@ -816,14 +936,34 @@ def telemetry_vote(tele, rep, mode):
     return "abstain"
 
 
+def telemetry_read(tele):
+    """The OS meter's own reading when there is no engine claim to
+    judge (a server endpoint): 'busy', 'flat', or None when it cannot
+    testify. Same gates as the vote: enough samples over the compute
+    windows and an idle machine before the run; a middling median stays
+    silent rather than guessing."""
+    if not tele or tele.get("off"):
+        return None
+    if tele["idle_med"] is None or tele["work_med"] is None \
+            or tele["work_n"] < 6:
+        return None
+    if tele["idle_med"] > 25:
+        return None
+    if tele["work_med"] >= 50:
+        return "busy"
+    if tele["work_med"] < tele["idle_med"] + 15:
+        return "flat"
+    return None
+
+
 def os_line(tele):
     """The one line of OS evidence in the block, None only when the
     render has no telemetry context at all (pre-telemetry replays)."""
     if tele is None:
         return None
     if tele.get("off"):
-        return "gpu not sampled ({}); evidence: engine+timing".format(
-            tele["off"])
+        return "gpu not sampled ({}); evidence: {}".format(
+            tele["off"], tele.get("ev", "engine+timing"))
     if tele["idle_med"] is not None and tele["idle_med"] > 25:
         return "gpu {:.0f}% busy before the run, not idle; not judged" \
             .format(tele["idle_med"])
@@ -916,6 +1056,11 @@ def attribute_why(state, rep, mode, engine_argv):
         # the ollama api exposes no command line, no fit log and no
         # init log, so the ladder has no rungs to climb here
         why = "unknown: not in the ollama api (check the server log)"
+    elif mode == "server":
+        # same blindness over http: /props carries no placement fields
+        # at all (checked on b9430), so the cause lives in the server's
+        # own stderr, not in anything picchio can reach
+        why = "unknown: not in the server api (check its stderr log)"
     else:
         n, total = rep["offload_n"], rep["offload_total"]
         forced = []
@@ -980,6 +1125,52 @@ def diagnose(cold, rep, mode, tele=None):
             bits.append("Decode ({:.1f}) looks passable; that is how "
                         "this hides.".format(decode))
         return " ".join(bits) or "The gpu line above is the story."
+
+    if mode == "server":
+        # no confession exists over http: the server api exposes neither
+        # layer counts nor a memory split, so the two witnesses that
+        # need none vote on their own. Cutoffs are the calibrated ones
+        # the other modes already use: work median 50 for busy, ratio
+        # under 5 cpu shaped, 15 and over gpu shaped (healthy gpu runs
+        # measured 20-44x here, cpu runs 2.3-5x).
+        votes = []
+        osr = telemetry_read(tele)
+        if osr == "busy":
+            votes.append(("the os meter saw the gpu work at "
+                          "{:.0f}%".format(tele["work_med"]), "gpu"))
+        elif osr == "flat":
+            votes.append(("the os meter saw the gpu stay flat while the "
+                          "tokens were made", "cpu"))
+        ratio = prefill / decode if prefill and decode else None
+        if ratio is not None and ratio >= 15:
+            votes.append(("prefill ran {:.0f}x decode, gpu "
+                          "shaped".format(ratio), "gpu"))
+        elif ratio is not None and ratio < 5:
+            votes.append(("prefill at {:.1f}x decode is cpu "
+                          "shaped".format(ratio), "cpu"))
+        shapes = {s for _, s in votes}
+        if len(shapes) == 2:
+            para = "{}; {}. No engine claim breaks the tie. Believe " \
+                   "neither.".format(votes[0][0], votes[1][0])
+            return "CONFLICTING EVIDENCE", para[0].upper() + para[1:]
+        if shapes == {"cpu"}:
+            para = " and ".join(t for t, _ in votes) \
+                + ": the tokens were made on the cpu."
+            if wait_s:
+                para += " Prefill: {:.0f} s per 2500 tokens.".format(wait_s)
+            return "SILENT CPU FALLBACK", para[0].upper() + para[1:]
+        if shapes == {"gpu"}:
+            para = " and ".join(t for t, _ in votes) \
+                + ": the gpu did the work."
+            if decode:
+                para += (" Quote the warm median decode: {:.1f} "
+                         "tok/s.".format(decode))
+            return "HEALTHY", para[0].upper() + para[1:]
+        return "NO PLACEMENT EVIDENCE", (
+            "The server api exposes no placement, and neither the os "
+            "meter nor the timing signature was decisive here. Rates "
+            "are measured; placement is not."
+        )
 
     if mode == "ollama":
         frac = rep["vram_frac"]
@@ -1156,6 +1347,8 @@ def colorize(text):
 
 
 def gpu_line(rep, mode):
+    if mode == "server":
+        return "NO EVIDENCE (the server api exposes no placement)"
     if mode == "ollama":
         frac = rep["vram_frac"]
         if frac is None:
@@ -1220,9 +1413,11 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
     # always-blank columns in the block ("ctx 9999999" just fits 11)
     out.append("{:<11}{:>13}  {:>13}  {:>13}".format(
         "ctx " + str(ctx), "prefill", "decode", "wallclock"))
-    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
-        "cold", fmt_rate(cold["prefill_toks"]), fmt_rate(cold["decode_toks"]),
-        fmt_rate(cold["wallclock_toks"])))
+    if mode != "server":
+        out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
+            "cold", fmt_rate(cold["prefill_toks"]),
+            fmt_rate(cold["decode_toks"]),
+            fmt_rate(cold["wallclock_toks"])))
     pm, plo, phi = warm_stats(passes, "prefill_toks")
     dm, dlo, dhi = warm_stats(passes, "decode_toks")
     wm, wlo, whi = warm_stats(passes, "wallclock_toks")
@@ -1232,22 +1427,29 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
         "warm span", fmt_span(plo, phi, big=True), fmt_span(dlo, dhi),
         fmt_span(wlo, whi)))
 
-    wall = cold["wall_s"] or 0
-    load_s = (cold["load_ms"] or 0) / 1000.0
-    prefill_s = (cold["prompt_ms"] or 0) / 1000.0
-    decode_s = (cold["eval_ms"] or 0) / 1000.0
-    other_s = max(0.0, wall - load_s - prefill_s - decode_s)
-    title = "where the cold pass went ({:.1f} s".format(wall)
-    if rep.get("threads"):
-        title += ", {}/{} threads".format(rep["threads"], rep["cores"])
-    if cold_note:
-        title += ", weights cached"
-    out.append(title + ")")
-    if wall > 0:
-        out.append(bar_line("load weights", load_s, load_s / wall))
-        out.append(bar_line("prefill", prefill_s, prefill_s / wall))
-        out.append(bar_line("decode", decode_s, decode_s / wall))
-        out.append(bar_line("engine misc", other_s, other_s / wall))
+    if mode == "server":
+        # the server owned the weights before pass 1, so no cold pass
+        # exists: no cold row, no load bar, and one line saying so
+        # beats a warm number dressed up as a cold one
+        out.append("cold start not measured: the server already owned "
+                   "the weights")
+    else:
+        wall = cold["wall_s"] or 0
+        load_s = (cold["load_ms"] or 0) / 1000.0
+        prefill_s = (cold["prompt_ms"] or 0) / 1000.0
+        decode_s = (cold["eval_ms"] or 0) / 1000.0
+        other_s = max(0.0, wall - load_s - prefill_s - decode_s)
+        title = "where the cold pass went ({:.1f} s".format(wall)
+        if rep.get("threads"):
+            title += ", {}/{} threads".format(rep["threads"], rep["cores"])
+        if cold_note:
+            title += ", weights cached"
+        out.append(title + ")")
+        if wall > 0:
+            out.append(bar_line("load weights", load_s, load_s / wall))
+            out.append(bar_line("prefill", prefill_s, prefill_s / wall))
+            out.append(bar_line("decode", decode_s, decode_s / wall))
+            out.append(bar_line("engine misc", other_s, other_s / wall))
     # the 15 line budget is enforced, not hoped for: however many
     # optional lines rode in (the os line, a WHY line), trailing
     # sentences drop from the paragraph until the block fits
@@ -1979,10 +2181,22 @@ def watch_cli(argv):
 # 4k.
 
 def resolve_engine(model, bin_):
-    """llama.cpp-vs-ollama resolution shared by measure and sweep: an
-    existing file is llama.cpp, a bare tag is ollama, a missing path is
-    an error (never quietly retried as a tag). Returns (mode, binpath,
-    engine_str, model_name)."""
+    """llama.cpp-vs-ollama-vs-server resolution shared by measure and
+    sweep: an existing file is llama.cpp, an http(s) url is a running
+    llama-server, a bare tag is ollama, a missing path is an error
+    (never quietly retried as a tag). Returns (mode, binpath,
+    engine_str, model_name); for a server the binpath slot carries the
+    url, since there is no binary to find."""
+    if model.startswith(("http://", "https://")):
+        url = model.rstrip("/")
+        ok, why = server_health(url)
+        if not ok:
+            sys.exit("picchio: " + why)
+        props = server_props(url)
+        name = os.path.basename(props.get("model_path") or "") \
+            or props.get("model_alias") or url
+        build = props.get("build_info") or "?"
+        return "server", url, "llama-server " + str(build), name
     if os.path.isfile(model):
         binpath = find_binary(bin_)
         return ("llama.cpp", binpath,
@@ -2128,6 +2342,9 @@ def selftest():
             if os.path.exists(stderr_p):
                 p = parse_stderr(open(stderr_p).read(), meta["wall_s"])
                 mode = "llama.cpp"
+            elif os.path.exists(resp_p) and meta.get("mode") == "server":
+                p = map_server(json.load(open(resp_p)), meta["wall_s"])
+                mode = "server"
             elif os.path.exists(resp_p):
                 p = map_ollama(json.load(open(resp_p)), meta["wall_s"],
                                meta.get("ps"))
@@ -2156,8 +2373,8 @@ def selftest():
         got = render_verdict(
             machine_info(), metas[0].get("engine", "?"),
             metas[0].get("model_name", "?"), passes, state, para, mode,
-            None, cold_note, why, effective_ctx(extra), extra,
-            tele).splitlines()
+            None, cold_note, why, metas[0].get("ctx", effective_ctx(extra)),
+            extra, tele).splitlines()
         if got[:-1] == want[:-1]:
             rp_ok += 1
         else:
@@ -2338,6 +2555,27 @@ def selftest():
             sw_ok += 1
     else:
         sw_all = 1  # no committed sweep yet: only the synthetic check runs
+    # server endpoint judge: no engine claim exists over http, so the
+    # two witnesses (os meter, speed signature) vote through the real
+    # diagnose path; the synthetic telemetry timelines above are reused
+    sv_ok, sv_all = 0, 4
+    sfx = blank_pass()
+    sfx.update(prefill_toks=560.0, decode_toks=20.0)  # 28x, gpu shaped
+    st, para = diagnose(sfx, sfx, "server", busy)
+    if st == "HEALTHY" and "os meter" in para and "gpu shaped" in para:
+        sv_ok += 1
+    cpu_fx = dict(sfx, prefill_toks=48.0, decode_toks=12.0)  # 4x, cpu
+    st, para = diagnose(cpu_fx, cpu_fx, "server", flat)
+    if st == "SILENT CPU FALLBACK" and "on the cpu" in para \
+            and "server api" in attribute_why(st, cpu_fx, "server", []):
+        sv_ok += 1
+    st, para = diagnose(cpu_fx, cpu_fx, "server", busy)  # witnesses fight
+    if st == "CONFLICTING EVIDENCE" and "Believe neither" in para:
+        sv_ok += 1
+    midr = dict(sfx, prefill_toks=200.0, decode_toks=20.0)  # 10x dead zone
+    st, para = diagnose(midr, midr, "server", None)
+    if st == "NO PLACEMENT EVIDENCE" and "placement is not" in para:
+        sv_ok += 1
     # onboarding: the zero-argument entry decision is pure given what the
     # scan found, whether a terminal is attached, and what gets typed. The
     # four paths plus the two edges, none of them touching a tty or a gpu
@@ -2387,13 +2625,15 @@ def selftest():
         gd_ok += 1
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
           "telemetry {}/{}, verify {}/{}, watch {}/{}, sweep {}/{}, "
-          "onboarding {}/{}".format(
+          "server {}/{}, onboarding {}/{}".format(
               fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all, te_ok, te_all,
-              ve_ok, ve_all, wa_ok, wa_all, sw_ok, sw_all, gd_ok, gd_all))
+              ve_ok, ve_all, wa_ok, wa_all, sw_ok, sw_all, sv_ok, sv_all,
+              gd_ok, gd_all))
     sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
              and cp_ok == cp_all and te_ok == te_all
              and ve_ok == ve_all and wa_ok == wa_all
-             and sw_ok == sw_all and gd_ok == gd_all else 1)
+             and sw_ok == sw_all and sv_ok == sv_all
+             and gd_ok == gd_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -2448,6 +2688,12 @@ def main():
             "  offload    how many model layers sit on the GPU "
             "(0/33 = CPU run)\n"
             "\n"
+            "server endpoint:\n"
+            "  picchio.py http://127.0.0.1:8080\n"
+            "  measure a llama-server you already have running, over its\n"
+            "  own http api; no cold pass (the server stays loaded), and\n"
+            "  placement is judged by the os meter and the speed signature\n"
+            "\n"
             "guard mode:\n"
             "  picchio.py guard [--keep-logs DIR] -- <command...>\n"
             "  wrap your own llama.cpp command (llama-server, llama-cli);\n"
@@ -2479,7 +2725,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("model", nargs="?",
-                    help="path to a .gguf file, or an ollama model tag")
+                    help="path to a .gguf file, an ollama model tag, or "
+                         "the url of a running llama-server "
+                         "(http://host:port)")
     ap.add_argument("--version", action="version",
                     version="picchio {} (protocol {})".format(
                         VERSION, PROTOCOL))
@@ -2561,11 +2809,15 @@ def main():
 
     mode, binpath, engine_str, model_name = resolve_engine(args.model,
                                                            args.bin)
-    if mode == "ollama" and args.extra:
+    if mode != "llama.cpp" and args.extra:
         sys.exit("picchio: passthrough args after -- only work in "
                  "llama.cpp mode.")
 
     if args.ctx_sweep is not None:
+        if mode == "server":
+            sys.exit("picchio: --ctx-sweep sets the context size per "
+                     "tier, and a server endpoint fixes it server side. "
+                     "Run the sweep on the .gguf file instead.")
         # a separate diagnostic, not an mp1 verdict: it changes the prompt
         # per tier, so it prints its own block and never touches the cache
         rows = ctx_sweep(args.model, mode, binpath, engine_str, model_name,
@@ -2577,17 +2829,38 @@ def main():
     if mode == "ollama" and ollama_ps_entry(args.model):
         sys.stderr.write("picchio: unloading model for a colder pass 1 ...\n")
         ollama_unload(args.model)
-    sampler = telemetry_start(args.no_telemetry)
+    if mode == "server" and not url_is_local(binpath):
+        # ioreg meters this machine; a remote server's gpu is not on it,
+        # so the os witness recuses itself instead of testifying about
+        # the wrong computer
+        sampler = {"off": "remote endpoint", "ev": "timing"}
+    else:
+        sampler = telemetry_start(args.no_telemetry)
+        if mode == "server" and isinstance(sampler, dict):
+            sampler["ev"] = "timing"
     if isinstance(sampler, GpuSampler):
         time.sleep(1.2)  # a few ticks of idle baseline before pass 1
+    block_ctx = server_ctx(binpath) if mode == "server" \
+        else effective_ctx(args.extra)
     for i in range(args.passes):
-        sys.stderr.write("picchio: pass {}{} ...\n".format(
-            i + 1, " (includes any cold load)" if i == 0 else " (warm)"))
+        if i > 0:
+            note = " (warm)"
+        elif mode == "server":
+            note = " (warm; the server is already loaded)"
+        else:
+            note = " (includes any cold load)"
+        sys.stderr.write("picchio: pass {}{} ...\n".format(i + 1, note))
         if mode == "llama.cpp":
             p = run_llama_pass(binpath, args.model, args.extra,
                                lp("pass{}.stderr.txt".format(i + 1)))
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "extra_args": args.extra}
+        elif mode == "server":
+            p = run_server_pass(
+                binpath, lp("pass{}.response.json".format(i + 1)))
+            meta = {"wall_s": p["wall_s"], "engine": engine_str,
+                    "model_name": model_name, "mode": "server",
+                    "ctx": block_ctx}
         else:
             p, ps = run_ollama_pass(
                 args.model, lp("pass{}.response.json".format(i + 1)))
@@ -2626,7 +2899,7 @@ def main():
 
     block = render_verdict(mach, engine_str, model_name, passes, state,
                            para, mode, explain_part, cold_note, why,
-                           effective_ctx(args.extra), args.extra, tele)
+                           block_ctx, args.extra, tele)
     print(colorize(block))
 
     save_cache({

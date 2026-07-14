@@ -1600,13 +1600,27 @@ def colorize(text, stream=None):
                     line = line.replace(word, BOLD + col + word + RESET, 1)
                     break
         elif line.startswith("picchio monitor: "):
-            for word, col in (("NOT ENGAGED", RED),
-                              ("SILENT CPU FALLBACK", RED),
-                              ("UNSURE", YELLOW),
-                              ("ENGAGED", GREEN)):
-                if word in line:
-                    line = line.replace(word, BOLD + col + word + RESET, 1)
-                    break
+            if line.startswith("picchio monitor: probing "):
+                line = DIM + line + RESET      # one-time setup scaffolding
+            else:
+                # the timestamp, probe index and the "was Nx" baseline aside
+                # are scaffolding: dim them so the eye lands on the state
+                # word and the live rates, which keep full weight
+                line = re.sub(r"\d\d:\d\d:\d\d probe\s+\d+",
+                              DIM + r"\g<0>" + RESET, line, count=1)
+                line = re.sub(r", was \d+x", DIM + r"\g<0>" + RESET,
+                              line, count=1)
+                for word, col in (("NOT ENGAGED", RED),
+                                  ("SILENT CPU FALLBACK", RED),
+                                  ("UNSURE", YELLOW),
+                                  ("ENGAGED", GREEN)):
+                    if word in line:
+                        line = line.replace(word, BOLD + col + word + RESET, 1)
+                        break
+                # the count roster sits dim behind the summary's verdict
+                # word, same idea as the discovery menu's columns
+                line = re.sub(r" - \d+ probes.*$", DIM + r"\g<0>" + RESET,
+                              line, count=1)
         elif line.startswith("SUSPECT: "):
             line = BOLD + YELLOW + "SUSPECT" + RESET + line[7:]
         elif line.startswith("  verdict"):
@@ -1641,6 +1655,9 @@ def menu_paint(line):
     m = re.match(r"^(  +\d+\) )(.*?)(  +\S.*)$", line)
     if m:
         return m.group(1) + m.group(2) + DIM + m.group(3) + RESET
+    # the overflow trailer is a footer hint, dim like the source columns
+    if re.match(r"^  \.\.\. and \d+ more", line):
+        return DIM + line + RESET
     return line
 
 
@@ -2481,9 +2498,14 @@ def watch_cli(argv):
 # would ever see it. monitor closes that window: it sends one controlled
 # probe on a fixed interval to a running llama-server, reads the per
 # request prefill and decode timings the server already returns, and
-# classifies each probe by the same ratio signature the block votes on
-# (prefill under 5x decode is cpu shaped, 15x and over gpu shaped, the band
-# between is unsure). Each probe is one line; a probe that flips the running
+# classifies each probe two ways, worse wins: the fixed ratio signature the
+# block votes on (prefill under 5x decode is cpu shaped, 15x and over gpu
+# shaped), and, once this server's own healthy baseline has locked from its
+# first few probes, a collapse relative to that baseline. The relative
+# signal is what makes the call self-calibrate to the machine under it
+# instead of a laptop-tuned constant, so a fallback on a many-core box
+# whose cpu keeps prefill above the fixed line still gets caught. Each
+# probe is one line; a probe that flips the running
 # placement prints a louder line, because a GPU that comes and goes between
 # requests is exactly the failure a single snapshot cannot catch. It
 # launches nothing and kills nothing: the server is the user's, monitor
@@ -2494,6 +2516,11 @@ def watch_cli(argv):
 
 MON_CPU_RATIO = 5.0     # prefill under this many x decode reads cpu shaped
 MON_GPU_RATIO = 15.0    # this and over reads gpu shaped; between is unsure
+MON_WARMUP = 3          # gpu-shaped probes that lock this server's healthy
+                        # baseline; after it locks, a collapse relative to
+                        # it flags even when the absolute ratio still passes
+MON_DROP_FLAG = 0.5     # a ratio under this fraction of baseline is cpu
+MON_DROP_WATCH = 0.7    # under this fraction is a dip worth a WATCH
 MON_EVERY_S = 30.0      # default seconds between probes; each probe is one
                         # full BENCH_PROMPT completion, so a shorter gap
                         # puts more real load on the server being watched
@@ -2501,20 +2528,36 @@ MON_TAG = {"OK": "ENGAGED", "FLAG": "NOT ENGAGED",
            "WATCH": "UNSURE", "NODATA": "NO DATA"}
 
 
-def monitor_classify(prefill, decode):
-    """One probe's verdict from its two rates, the same signature the
-    server block votes on. Returns (state, ratio): OK when the shape is
-    gpu, FLAG when it is cpu, WATCH in the unsure band, NODATA when a rate
-    is missing (a probe that came back without usable timings convicts
-    nobody)."""
+def monitor_classify(prefill, decode, baseline=None):
+    """One probe's verdict from its two rates. Returns (state, ratio), and
+    the worse of two signals wins. The absolute signal is the fixed one the
+    server block uses (prefill under 5x decode is cpu shaped, 15x and over
+    gpu shaped); it is the only signal during warmup and always a floor.
+    The relative signal, live once this server's own healthy baseline has
+    locked, flags a ratio that collapsed to under half the baseline even
+    when its absolute value would pass, which is how a fallback is caught
+    on a many-core box whose cpu keeps prefill above the fixed line. NODATA
+    when a rate is missing (nothing to convict on)."""
     if not prefill or not decode:
         return "NODATA", None
     ratio = prefill / decode
     if ratio < MON_CPU_RATIO:
-        return "FLAG", ratio
-    if ratio >= MON_GPU_RATIO:
-        return "OK", ratio
-    return "WATCH", ratio
+        abs_state = "FLAG"
+    elif ratio >= MON_GPU_RATIO:
+        abs_state = "OK"
+    else:
+        abs_state = "WATCH"
+    if not baseline:
+        return abs_state, ratio
+    if ratio < MON_DROP_FLAG * baseline:
+        rel_state = "FLAG"
+    elif ratio < MON_DROP_WATCH * baseline:
+        rel_state = "WATCH"
+    else:
+        rel_state = "OK"
+    rank = {"FLAG": 2, "WATCH": 1, "OK": 0}
+    return (abs_state if rank[abs_state] >= rank[rel_state]
+            else rel_state), ratio
 
 
 def monitor_summarize(events):
@@ -2531,15 +2574,20 @@ def monitor_summarize(events):
             "worst_ratio": min(ratios) if ratios else None}
 
 
-def monitor_line(stamp, i, state, ratio, prefill, decode):
+def monitor_line(stamp, i, state, ratio, prefill, decode, baseline=None):
     """One compact status line per probe, pasteable, colorized by the
-    monitor branch in colorize()."""
+    monitor branch in colorize(). A degraded probe carries the baseline it
+    fell from, so the line shows the call was made against this server and
+    not a fixed number."""
     head = "picchio monitor: {} probe {:<3} {}".format(
         stamp, i, MON_TAG[state])
     if state == "NODATA":
         return head + "  the server returned no usable timings"
-    return "{}  prefill {}, decode {} ({:.1f}x)".format(
-        head, fmt_rate(prefill), fmt_rate(decode), ratio)
+    tail = "prefill {}, decode {} ({:.1f}x".format(
+        fmt_rate(prefill), fmt_rate(decode), ratio)
+    if baseline and state in ("FLAG", "WATCH"):
+        tail += ", was {:.0f}x".format(baseline)
+    return "{}  {})".format(head, tail)
 
 
 def monitor_summary_line(summ):
@@ -2596,6 +2644,7 @@ def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
         "picchio monitor: probing {} every {:.0f} s (ctx {}); "
         "ctrl-c to stop\n".format(url, every, ctx))
     events, last_decisive, i = [], None, 0
+    baseline, healthy = None, []
     deadline = (time.monotonic() + duration) if duration else None
     try:
         while deadline is None or time.monotonic() < deadline:
@@ -2615,11 +2664,23 @@ def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
                     break
                 continue
             prefill, decode = p["prefill_toks"], p["decode_toks"]
-            state, ratio = monitor_classify(prefill, decode)
+            state, ratio = monitor_classify(prefill, decode, baseline)
             events.append((state, ratio))
             sys.stderr.write(colorize(monitor_line(
-                time.strftime("%H:%M:%S"), i, state, ratio, prefill, decode),
-                sys.stderr) + "\n")
+                time.strftime("%H:%M:%S"), i, state, ratio, prefill, decode,
+                baseline), sys.stderr) + "\n")
+            # lock this server's own healthy baseline from its first few
+            # gpu-shaped probes; after it locks a collapse from it flags
+            # even when the absolute ratio would still clear the fixed line
+            if baseline is None and ratio is not None \
+                    and ratio >= MON_GPU_RATIO:
+                healthy.append(ratio)
+                if len(healthy) >= MON_WARMUP:
+                    baseline = statistics.median(healthy)
+                    sys.stderr.write(
+                        "picchio monitor: baseline locked at {:.0f}x "
+                        "prefill/decode for this server; a collapse from "
+                        "it now flags too\n".format(baseline))
             if state in ("OK", "FLAG"):
                 if last_decisive and state != last_decisive:
                     sys.stderr.write(colorize(
@@ -3685,7 +3746,7 @@ def selftest():
         wa_ok += 1
     # monitor: the per probe signature classifier and the session summary,
     # both pure, so ci needs no live server
-    mo_ok, mo_all = 0, 4
+    mo_ok, mo_all = 0, 6
     # a gpu shaped probe reads OK, a cpu shaped one FLAG (the same 5x/15x
     # lines the server block uses), a missing rate convicts nobody
     if monitor_classify(588.0, 21.1)[0] == "OK" \
@@ -3706,6 +3767,19 @@ def selftest():
     steady = monitor_summarize([("OK", 27.0), ("OK", 26.5), ("OK", 28.1)])
     if steady["flag"] == 0 and steady["transitions"] == 0 \
             and "ENGAGED throughout" in monitor_summary_line(steady):
+        mo_ok += 1
+    # baseline self-calibration: a many-core cpu fallback whose absolute
+    # ratio still clears the fixed 15x line (a cpu run measured 15.1x on 48
+    # EPYC threads) is caught relative to a 60x healthy baseline, the miss
+    # the fixed floor alone would wave through
+    if monitor_classify(1800.0, 30.0, baseline=60.0)[0] == "OK" \
+            and monitor_classify(226.0, 15.0, baseline=60.0)[0] == "FLAG" \
+            and monitor_classify(226.0, 15.0)[0] == "OK":
+        mo_ok += 1
+    # run-to-run noise against the baseline does not false flag; a real sag
+    # into the dip band reads WATCH, not a false ENGAGED
+    if monitor_classify(560.0, 24.0, baseline=27.0)[0] == "OK" \
+            and monitor_classify(300.0, 20.0, baseline=27.0)[0] == "WATCH":
         mo_ok += 1
     # ctx sweep: the slope sentence is exact on synthetic rows, and the
     # committed real sweep replays like a verdict block when present

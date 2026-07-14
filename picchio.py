@@ -1540,17 +1540,19 @@ def wrap_para(text):
                          initial_indent="  ", subsequent_indent="  ")
 
 
-def colorize(text):
-    """ANSI color for terminals only. Piped or redirected output stays
-    pure ASCII, so a pasted block is identical to what the parser and
-    the selftest see. NO_COLOR is respected."""
-    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+def colorize(text, stream=None):
+    """ANSI color for terminals only (stream defaults to stdout; guard
+    passes stderr). Piped or redirected output stays pure ASCII, so a
+    pasted block is identical to what the parser and the selftest see.
+    NO_COLOR is respected. The id card is left unpainted on purpose:
+    it is the paste totem, and it must look the same everywhere."""
+    if os.environ.get("NO_COLOR") or not (stream or sys.stdout).isatty():
         return text
     BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
     GREEN, RED, YELLOW = "\033[32m", "\033[31m", "\033[33m"
     states = (("SILENT CPU FALLBACK", RED), ("CONFLICTING EVIDENCE", YELLOW),
               ("PARTIAL OFFLOAD", YELLOW), ("NO PLACEMENT EVIDENCE", YELLOW),
-              ("HEALTHY", GREEN))
+              ("HEALTHY", GREEN), ("PASS", GREEN), ("FLAG", RED))
     out = []
     for line in text.splitlines():
         if line.startswith("VERDICT: "):
@@ -1572,11 +1574,30 @@ def colorize(text):
                 if line.startswith(word):
                     line = line.replace(word, BOLD + col + word + RESET, 1)
                     break
+        elif line.startswith("picchio guard: "):
+            for word, col in (("NOT ENGAGED", RED),
+                              ("SILENT CPU FALLBACK", RED),
+                              ("PARTIAL OFFLOAD", YELLOW),
+                              ("ENGAGED", GREEN)):
+                if word in line:
+                    line = line.replace(word, BOLD + col + word + RESET, 1)
+                    break
+        elif line.startswith("SUSPECT: "):
+            line = BOLD + YELLOW + "SUSPECT" + RESET + line[7:]
+        elif line.startswith("  verdict"):
+            for word, col in (("not judged", None), ("fits", GREEN),
+                              ("tight", YELLOW), ("no", RED)):
+                if word in line:
+                    if col:
+                        line = line.replace(
+                            word, BOLD + col + word + RESET, 1)
+                    break
         elif line.startswith(("WHY: ", "-- picchio")) or (
-                "prefill" in line and "wallclock" in line
+                line.startswith(("ctx ", "depth"))
+                and "prefill" in line and "wallclock" in line
                 and "tok/s" not in line):
             line = DIM + line + RESET
-        elif line.startswith("YOUR NUMBER: "):
+        elif line.startswith(("YOUR NUMBER: ", "SLOPE: ")):
             line = BOLD + line + RESET
         out.append(line)
     return "\n".join(out)
@@ -1816,8 +1837,9 @@ def guard(cmd, keep_dir=None):
             if pending and ("_Mapped model buffer size" in stripped
                             or RE_GUARD_PAST.search(stripped)):
                 rep = parse_stderr("\n".join(pinned), None)
-                sys.stderr.write(
-                    guard_state_line(rep, guard_why(rep, cmd)) + "\n")
+                sys.stderr.write(colorize(
+                    guard_state_line(rep, guard_why(rep, cmd)),
+                    sys.stderr) + "\n")
                 announced = True
     except KeyboardInterrupt:
         pass  # ctrl-c went to the child too; fall through to its exit
@@ -1841,7 +1863,7 @@ def guard(cmd, keep_dir=None):
         out.append("picchio guard: last rates seen: prefill {}, "
                    "decode {}".format(fmt_rate(rep["prefill_toks"]),
                                       fmt_rate(rep["decode_toks"])))
-    sys.stderr.write("\n".join(out) + "\n")
+    sys.stderr.write(colorize("\n".join(out), sys.stderr) + "\n")
     # exit code: the child's own, passed through (128+N for a signal,
     # the shell convention). Measure mode owns its subprocess, so there
     # picchio's 0/2/3/4/5 codes are the product; here the subprocess is
@@ -2088,7 +2110,7 @@ def compare_cli(argv):
             sys.exit("picchio compare: no verdict block in {} (need at "
                      "least the model line and a rates row)".format(path))
         blocks.append(blk)
-    print(render_compare(argv, blocks[0], blocks[1]))
+    print(colorize(render_compare(argv, blocks[0], blocks[1])))
 
 
 # ------------------------------------------------------------------ verify
@@ -2223,7 +2245,7 @@ def verify_cli(argv):
                          "the model line and a rates row).\n".format(src))
         sys.exit(2)
     verdict, flags = verify_block(b)
-    print(render_verify(src, b, verdict, flags))
+    print(colorize(render_verify(src, b, verdict, flags)))
     # reuse the measure exit map: a self-consistent block is 0, a block
     # whose sources fight is CONFLICTING EVIDENCE (5), the same code a
     # live run gets when two sources disagree
@@ -2914,7 +2936,8 @@ def plan_cli(argv):
     if argv:
         name, fb, meta, note = plan_target(argv[0])
         row = plan_row(name, fb, meta, note, budget, bw)
-        print(render_plan_one(row, budget, blabel, bw, speed_note))
+        print(colorize(render_plan_one(row, budget, blabel, bw,
+                                       speed_note)))
         sys.exit(0)
     sizes = {}
     if ollama_reachable():
@@ -2940,7 +2963,7 @@ def plan_cli(argv):
     if not rows:
         sys.exit("picchio plan: no models found on this machine; give "
                  "it a .gguf path or an ollama tag.")
-    print(render_plan_scan(rows, budget, blabel, bw, speed_note))
+    print(colorize(render_plan_scan(rows, budget, blabel, bw, speed_note)))
     sys.exit(0)
 
 
@@ -4119,7 +4142,7 @@ def main():
         # per tier, so it prints its own block and never touches the cache
         rows = ctx_sweep(args.model, mode, binpath, engine_str, model_name,
                          parse_tiers(args.ctx_sweep), max(2, args.passes), lp)
-        print(render_sweep(mach, engine_str, model_name, rows))
+        print(colorize(render_sweep(mach, engine_str, model_name, rows)))
         sys.exit(0)
 
     passes = []

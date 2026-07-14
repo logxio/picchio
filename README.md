@@ -110,12 +110,15 @@ GPU is working, 4 when it sits idle.
 
 `picchio id MODEL` walks the gguf tensor table and prices every
 tensor by its ggml type. Our own Q4_K_M measures 5.07 bits per
-weight, a mix of five tensor types from 4.50 to 32.00 bits, and
-the header's own byte offsets have to audit to the same total
-before the card prints. The same Qwen3.5-9B under the same Q4_K_M
-label measures 5.02, 5.02, 5.07 and 5.27 bits per weight across
-four quantizers, on the 427 tensors all four files share
-([examples/quantizers/](examples/quantizers/)). The KV cache dtype is not in the file; the card cites
+weight, 27% over the 4 in the name: a mix of five tensor types
+from 4.50 to 32.00 bits, and the header's own byte offsets have to
+audit to the same total before the card prints. The same Qwen3.5-9B
+under the same Q4_K_M label measures 5.02, 5.02, 5.07 and 5.27 bits
+per weight across four quantizers, on the 427 tensors all four
+files share ([examples/quantizers/](examples/quantizers/)). The
+label does not even promise the same tensor set: one quantizer
+ships a 243M-parameter MTP head inside the main file at q8_0,
+another ships the same head as a separate repo. The KV cache dtype is not in the file; the card cites
 the last run measured here. On a mixture of experts it reports how
 many experts wake per token
 ([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about

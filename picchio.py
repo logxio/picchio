@@ -38,9 +38,10 @@
 #   python3 picchio.py watch --engine ollama
 #                                       (point the OS gpu meter at any
 #                                        running engine; no stderr parse)
-#   python3 picchio.py monitor http://127.0.0.1:8080
-#                                       (probe a running server on a timer;
-#                                        flag any request the GPU dropped)
+#   python3 picchio.py monitor qwen3.5:9b --json
+#                                       (probe a running server or ollama on
+#                                        a timer; flag any request the GPU
+#                                        dropped; --json to paste in an issue)
 #   python3 picchio.py model.gguf --ctx-sweep
 #                                       (re-measure at 4k/16k/32k context
 #                                        and report the decode decay slope)
@@ -2630,20 +2631,66 @@ def _monitor_wait(t0, every, deadline):
     return deadline is None or time.monotonic() < deadline
 
 
-def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
-    """Probe a running llama-server on a timer and flag any probe whose
-    prefill/decode signature goes cpu shaped. Speaks one line per probe and
-    a louder line whenever the placement flips, never launches or signals
-    the server, and exits 4 the moment any probe caught the gpu not doing
-    the work (0 if it held the whole session)."""
-    ok, why = server_health(url)
-    if not ok:
-        sys.exit("picchio monitor: " + why)
-    ctx = server_ctx(url)
+def monitor_target_mode(arg):
+    """What kind of running engine a monitor target names: 'server' for an
+    http(s) llama-server url, 'ollama' for a bare model tag, None for a
+    file path (monitor watches a running server, never a file on disk)."""
+    if arg.startswith(("http://", "https://")):
+        return "server"
+    if "/" in arg or arg.lower().endswith(".gguf"):
+        return None
+    return "ollama"
+
+
+def monitor_json(target, mode, engine, machine, baseline, timeline, summ):
+    """The pasteable session artifact for an issue: what was watched, the
+    baseline it calibrated to, every probe in order, and the verdict that
+    set the exit code. Pure, so the selftest checks its shape with no live
+    server."""
+    return {
+        "tool": "picchio", "version": VERSION, "protocol": PROTOCOL,
+        "mode": mode, "target": target, "engine": engine,
+        "machine": machine, "baseline_ratio": baseline, "probes": timeline,
+        "summary": {"probes": summ["n"], "engaged": summ["ok"],
+                    "cpu": summ["flag"], "transitions": summ["transitions"],
+                    "worst_ratio": round(summ["worst_ratio"], 1)
+                    if summ["worst_ratio"] is not None else None},
+        "verdict": ("SILENT CPU FALLBACK seen" if summ["flag"]
+                    else "ENGAGED throughout"),
+        "exit_code": 4 if summ["flag"] else 0,
+    }
+
+
+def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
+            as_json=False):
+    """Probe a running engine on a timer and flag any probe whose
+    prefill/decode signature collapses. mode is 'server' (a llama-server
+    url, read over /completion) or 'ollama' (a model tag, over
+    /api/generate); both read the per request timings the engine already
+    returns and run the same ratio-plus-baseline call. One line per probe,
+    a louder line when the placement flips, a pasteable json session on
+    --json; never launches or signals the engine, and exits 4 the moment a
+    probe caught the work off the gpu (0 if it held the whole session)."""
+    if mode == "ollama":
+        ver = ollama_reachable()
+        if not ver:
+            sys.exit("picchio monitor: no ollama is answering at {}. Start "
+                     "it, or check OLLAMA_HOST.".format(OLLAMA_HOST))
+        if not ollama_has_model(target):
+            sys.exit("picchio monitor: ollama has no model tagged {}; check "
+                     "`ollama list`.".format(target))
+        engine, ctx = "ollama " + ver, CTX
+    else:
+        ok, why = server_health(target)
+        if not ok:
+            sys.exit("picchio monitor: " + why)
+        build = server_props(target).get("build_info")
+        engine = "llama-server" + (" " + str(build) if build else "")
+        ctx = server_ctx(target)
     sys.stderr.write(
         "picchio monitor: probing {} every {:.0f} s (ctx {}); "
-        "ctrl-c to stop\n".format(url, every, ctx))
-    events, last_decisive, i = [], None, 0
+        "ctrl-c to stop\n".format(target, every, ctx))
+    events, timeline, last_decisive, i = [], [], None, 0
     baseline, healthy = None, []
     deadline = (time.monotonic() + duration) if duration else None
     try:
@@ -2653,9 +2700,10 @@ def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
             lp = os.path.join(keep_dir, "probe{}.response.json".format(i)) \
                 if keep_dir else None
             try:
-                p = run_server_pass(url, lp)
+                p = run_ollama_pass(target, lp)[0] if mode == "ollama" \
+                    else run_server_pass(target, lp)
             except (urllib.error.URLError, OSError, ValueError) as e:
-                # a server that stopped answering is an event worth a line,
+                # an engine that stopped answering is an event worth a line,
                 # but not a cpu conviction; keep the timer running so a
                 # restart is picked up on the next tick
                 sys.stderr.write("picchio monitor: probe {} could not reach "
@@ -2666,6 +2714,11 @@ def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
             prefill, decode = p["prefill_toks"], p["decode_toks"]
             state, ratio = monitor_classify(prefill, decode, baseline)
             events.append((state, ratio))
+            timeline.append({
+                "i": i, "state": state,
+                "ratio": round(ratio, 1) if ratio else None,
+                "prefill": round(prefill, 1) if prefill else None,
+                "decode": round(decode, 1) if decode else None})
             sys.stderr.write(colorize(monitor_line(
                 time.strftime("%H:%M:%S"), i, state, ratio, prefill, decode,
                 baseline), sys.stderr) + "\n")
@@ -2695,40 +2748,55 @@ def monitor(url, every=MON_EVERY_S, duration=None, keep_dir=None):
         sys.stderr.write("\n")
     summ = monitor_summarize(events)
     sys.stderr.write(colorize(monitor_summary_line(summ), sys.stderr) + "\n")
+    if as_json:
+        print(json.dumps(monitor_json(
+            target, mode, engine, machine_info(),
+            round(baseline, 1) if baseline else None, timeline, summ),
+            indent=1))
     sys.exit(4 if summ["flag"] else 0)
 
 
 def monitor_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py monitor URL [--every SEC] [--for SEC] "
-              "[--keep-logs DIR]\n"
-              "probe a running llama-server on an interval and flag any\n"
-              "probe whose prefill/decode signature goes cpu shaped: the\n"
-              "intermittent fallback a single snapshot cannot see. never\n"
-              "launches or kills the server.")
+        print("usage: picchio.py monitor TARGET [--every SEC] [--for SEC] "
+              "[--json] [--keep-logs DIR]\n"
+              "probe a running engine on an interval and flag any probe\n"
+              "whose prefill/decode ratio collapses from that engine's own\n"
+              "healthy baseline: the intermittent fallback a single snapshot\n"
+              "cannot see. TARGET is a llama-server url or an ollama tag.\n"
+              "--json prints a pasteable session summary. Never launches or\n"
+              "kills the engine.")
         sys.exit(0)
-    url = keep = None
-    every, dur, i = MON_EVERY_S, None, 0
+    target = keep = None
+    every, dur, as_json, i = MON_EVERY_S, None, False, 0
     while i < len(argv):
         a = argv[i]
         if a == "--every" and i + 1 < len(argv):
             every, i = _mon_secs("--every", argv[i + 1]), i + 2
         elif a == "--for" and i + 1 < len(argv):
             dur, i = _mon_secs("--for", argv[i + 1]), i + 2
+        elif a == "--json":
+            as_json, i = True, i + 1
         elif a == "--keep-logs" and i + 1 < len(argv):
             keep = argv[i + 1]
             os.makedirs(keep, exist_ok=True)
             i += 2
-        elif a.startswith(("http://", "https://")) and url is None:
-            url, i = a, i + 1
+        elif not a.startswith("-") and target is None:
+            target, i = a, i + 1
         else:
             sys.exit("picchio monitor: unexpected argument {!r}.\nusage: "
-                     "picchio.py monitor URL [--every SEC] [--for SEC] "
-                     "[--keep-logs DIR]".format(a))
-    if url is None:
-        sys.exit("picchio monitor: give the url of a running llama-server, "
-                 "e.g. picchio.py monitor http://127.0.0.1:8080")
-    monitor(url, every, dur, keep)
+                     "picchio.py monitor TARGET [--every SEC] [--for SEC] "
+                     "[--json] [--keep-logs DIR]".format(a))
+    if target is None:
+        sys.exit("picchio monitor: give a llama-server url or an ollama tag, "
+                 "e.g. picchio.py monitor http://127.0.0.1:8080  or  "
+                 "picchio.py monitor qwen3.5:9b")
+    mode = monitor_target_mode(target)
+    if mode is None:
+        sys.exit("picchio monitor: {!r} looks like a file; monitor watches a "
+                 "running server. Give a url (http://host:port) or an ollama "
+                 "tag.".format(target))
+    monitor(target, mode, every, dur, keep, as_json)
 
 
 # --------------------------------------------------------------- ctx sweep
@@ -3746,7 +3814,7 @@ def selftest():
         wa_ok += 1
     # monitor: the per probe signature classifier and the session summary,
     # both pure, so ci needs no live server
-    mo_ok, mo_all = 0, 6
+    mo_ok, mo_all = 0, 8
     # a gpu shaped probe reads OK, a cpu shaped one FLAG (the same 5x/15x
     # lines the server block uses), a missing rate convicts nobody
     if monitor_classify(588.0, 21.1)[0] == "OK" \
@@ -3780,6 +3848,24 @@ def selftest():
     # into the dip band reads WATCH, not a false ENGAGED
     if monitor_classify(560.0, 24.0, baseline=27.0)[0] == "OK" \
             and monitor_classify(300.0, 20.0, baseline=27.0)[0] == "WATCH":
+        mo_ok += 1
+    # target detection: an http url is a server, a bare tag is ollama, a
+    # file path is neither (monitor watches a running server, not a file)
+    if monitor_target_mode("http://127.0.0.1:8080") == "server" \
+            and monitor_target_mode("qwen3.5:9b") == "ollama" \
+            and monitor_target_mode("/models/m.gguf") is None \
+            and monitor_target_mode("m.gguf") is None:
+        mo_ok += 1
+    # the --json session artifact carries the verdict, baseline, counts and
+    # the full probe timeline, shaped to paste into an issue
+    mj = monitor_json("qwen3.5:9b", "ollama", "ollama 0.31.1", {"os": "x"},
+                      27.0, [{"i": 1, "state": "OK", "ratio": 27.0},
+                             {"i": 2, "state": "FLAG", "ratio": 2.3}],
+                      monitor_summarize([("OK", 27.0), ("FLAG", 2.3)]))
+    if mj["mode"] == "ollama" and mj["baseline_ratio"] == 27.0 \
+            and mj["summary"]["cpu"] == 1 and len(mj["probes"]) == 2 \
+            and mj["verdict"] == "SILENT CPU FALLBACK seen" \
+            and mj["exit_code"] == 4:
         mo_ok += 1
     # ctx sweep: the slope sentence is exact on synthetic rows, and the
     # committed real sweep replays like a verdict block when present
@@ -4351,10 +4437,12 @@ def main():
             "  parsing any engine's output (works for mlx, lm studio, ...)\n"
             "\n"
             "monitor mode:\n"
-            "  picchio.py monitor URL [--every SEC] [--for SEC]\n"
-            "  probe a running llama-server on a timer and flag any probe\n"
-            "  whose prefill/decode signature goes cpu shaped: the\n"
-            "  intermittent fallback a single snapshot cannot catch\n"
+            "  picchio.py monitor TARGET [--every SEC] [--for SEC] [--json]\n"
+            "  probe a running engine on a timer and flag any probe whose\n"
+            "  prefill/decode ratio collapses from that engine's own healthy\n"
+            "  baseline, the intermittent fallback a single snapshot cannot\n"
+            "  catch. TARGET is a llama-server url or an ollama tag; --json\n"
+            "  prints a session summary you can paste into an issue\n"
             "\n"
             "ctx sweep:\n"
             "  picchio.py model.gguf --ctx-sweep [4096,16384,32768]\n"

@@ -1565,6 +1565,13 @@ def colorize(text):
                 if word in line:
                     line = line.replace(word, BOLD + col + word + RESET, 1)
                     break
+        elif line.startswith("GPU "):
+            for word, col in (("GPU BUSY", GREEN), ("GPU IDLE", RED),
+                              ("GPU MIXED", YELLOW),
+                              ("GPU UNREADABLE", YELLOW)):
+                if line.startswith(word):
+                    line = line.replace(word, BOLD + col + word + RESET, 1)
+                    break
         elif line.startswith(("WHY: ", "-- picchio")) or (
                 "prefill" in line and "wallclock" in line
                 and "tok/s" not in line):
@@ -2384,7 +2391,7 @@ def watch(pid=None, engine=None, duration=None):
     summ = watch_summary(sampler.samples)
     summ["throttled"] = sampler._hot or thermal_raised()
     state, para = watch_verdict(summ, ctx)
-    print(render_watch(ctx, summ, state, para))
+    print(colorize(render_watch(ctx, summ, state, para)))
     # reuse the measure exit map's meaning: the gpu doing the work is 0,
     # the gpu sitting idle while tokens are made is the fallback code (4)
     sys.exit({"GPU IDLE": 4}.get(state, 0))

@@ -1,0 +1,8 @@
+picchio monitor: probing http://127.0.0.1:8099 every 6 s (ctx 4096); ctrl-c to stop
+picchio monitor: 06:26:11 probe 1   ENGAGED  prefill 558.9 tok/s, decode 20.0 tok/s (27.9x)
+picchio monitor: 06:26:19 probe 2   ENGAGED  prefill 503.1 tok/s, decode 19.6 tok/s (25.7x)
+picchio monitor: probe 3 could not reach the server: Remote end closed connection without response
+picchio monitor: 06:27:05 probe 4   NOT ENGAGED  prefill 26.4 tok/s, decode 11.2 tok/s (2.3x)
+picchio monitor: placement changed ENGAGED -> NOT ENGAGED at probe 4
+picchio monitor: 06:27:47 probe 5   NOT ENGAGED  prefill 25.5 tok/s, decode 11.2 tok/s (2.3x)
+picchio monitor: SILENT CPU FALLBACK seen - 4 probes, 2 engaged, 2 on cpu, 1 placement change(s), worst prefill 2.3x decode

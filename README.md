@@ -68,6 +68,7 @@ In the table, `picchio` stands for `python3 picchio.py`.
 | `picchio compare A.txt B.txt` | diffs two saved blocks variable by variable, the first config difference takes the blame | [example](examples/compare.txt) |
 | `picchio verify FILE` | flags a pasted block whose own numbers contradict each other | [example](examples/verify-forged.txt) |
 | `picchio watch [PID]` | points the OS GPU meter at a process or the whole GPU, no engine log parsing (macOS) | [example](examples/watch-ollama.txt) |
+| `picchio monitor URL` | probes a running llama-server on a timer, flags any probe whose prefill/decode signature turns CPU shaped | [example](examples/monitor.txt) |
 | `picchio plan [MODEL]` | will it fit, priced from the gguf header; a decode estimate appears once one run is measured | [example](examples/plan-35b.txt) |
 | `picchio id MODEL` | splits the quant label: per tensor type mix, effective bits per weight, KV dtype, experts | [example](examples/id-35b.txt) |
 | `picchio --explain 36` | classifies a number you saw against the lanes measured here (cached rates, no rerun) | [example](examples/explain-36.txt) |
@@ -104,7 +105,8 @@ evidence. guard passes the wrapped command's own exit code through
 (128 plus the signal number if it died by one); compare exits 0
 once both blocks parse; verify exits 0 when a block is
 self-consistent, 5 when its sources fight; watch exits 0 when the
-GPU is working, 4 when it sits idle.
+GPU is working, 4 when it sits idle; monitor exits 0 when every
+probe held the GPU, 4 when any probe caught a fallback.
 
 ## The quant label
 

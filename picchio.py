@@ -215,6 +215,12 @@ def keep_log(path, text):
 def find_binary(explicit):
     if explicit:
         if shutil.which(explicit) or os.path.isfile(explicit):
+            if os.path.basename(explicit).startswith("llama-cli") \
+                    and shutil.which("llama-completion"):
+                sys.stderr.write(
+                    "picchio: note: --bin points at the interactive "
+                    "llama-cli; llama-completion is the one-shot binary and "
+                    "is on your PATH (the runaway guard is on either way).\n")
             return explicit
         sys.exit("picchio: engine binary not found: {}".format(explicit))
     # llama-completion is the one-shot binary on current llama.cpp builds;
@@ -247,6 +253,72 @@ def engine_version(binpath):
     return parse_engine_version(_cmd_out([binpath, "--version"]))
 
 
+RUN_CAP = 32 * 1024 * 1024  # hard cap on one engine run's captured output.
+# A modern llama-cli told a flag it does not know (-no-cnv) drops into
+# conversation mode and, under EOF, prints forever: measured here at tens
+# of millions of tokens in 30 s, gigabytes buffered by capture_output. The
+# cap kills that in a few seconds; the 30 minute timeout and an unbounded
+# capture never would. Well above any real run's output (verbose stderr is
+# a few MB at most), so only a runaway ever trips it.
+
+
+def _run_capped(args, timeout, cap):
+    """subprocess.run(capture_output=True) with a hard byte cap: the child
+    is killed the instant its captured output passes `cap`, so a runaway
+    interactive binary cannot exhaust memory or hang for the full timeout.
+    Returns an object with .returncode, .stdout, .stderr, .capped and
+    .timedout. Both pipes are drained by threads so neither can deadlock on
+    a full OS buffer."""
+    proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, errors="replace")
+    buf = {"out": [], "err": [], "n": 0, "capped": False}
+    lock = threading.Lock()
+
+    def pump(pipe, key):
+        try:
+            while True:
+                chunk = pipe.read(65536)
+                if not chunk:
+                    return
+                with lock:
+                    if buf["n"] >= cap:
+                        if not buf["capped"]:
+                            buf["capped"] = True
+                            proc.kill()
+                        return
+                    buf[key].append(chunk)
+                    buf["n"] += len(chunk)
+        except (ValueError, OSError):
+            pass
+
+    threads = [threading.Thread(target=pump, args=(proc.stdout, "out"),
+                                daemon=True),
+               threading.Thread(target=pump, args=(proc.stderr, "err"),
+                                daemon=True)]
+    for t in threads:
+        t.start()
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        proc.kill()
+        proc.wait()
+    for t in threads:
+        t.join(timeout=2)
+
+    class _R:
+        pass
+    r = _R()
+    r.returncode = proc.returncode
+    r.stdout = "".join(buf["out"])
+    r.stderr = "".join(buf["err"])
+    r.capped = buf["capped"]
+    r.timedout = timed_out
+    return r
+
+
 def run_llama_pass(binpath, model, extra_args, log_path=None,
                    prompt=BENCH_PROMPT, ctx=CTX):
     base = [
@@ -268,25 +340,32 @@ def run_llama_pass(binpath, model, extra_args, log_path=None,
     last = None
     for args in attempts:
         t0 = time.monotonic()
-        try:
-            r = subprocess.run(
-                args + extra_args,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=1800,
-            )
-        except subprocess.TimeoutExpired:
-            sys.exit("picchio: engine run exceeded 30 minutes, giving up.")
+        r = _run_capped(args + extra_args, 1800, RUN_CAP)
         wall_s = time.monotonic() - t0
+        if r.capped:
+            # a flood, not a slow run: the binary went interactive and
+            # printed without end. Retrying with fewer flags cannot make it
+            # one-shot, so stop now and point at the binary that is.
+            hint = ""
+            if os.path.basename(binpath).startswith("llama-cli") \
+                    and shutil.which("llama-completion"):
+                hint = ("\nThis is the interactive llama-cli; rerun with the "
+                        "one-shot binary:  --bin llama-completion")
+            sys.exit(
+                "picchio: {} produced runaway output (over {} MB) and never "
+                "returned, so picchio stopped it. A modern llama-cli ignores "
+                "-no-cnv and drops into conversation mode under EOF.{}".format(
+                    os.path.basename(binpath), RUN_CAP // (1024 * 1024), hint))
+        if r.timedout:
+            sys.exit("picchio: engine run exceeded 30 minutes, giving up.")
         if r.returncode == 0:
             keep_log(log_path, r.stderr)
             return parse_stderr(r.stderr, wall_s)
         last = r
-    tail = "\n".join(last.stderr.strip().splitlines()[-6:])
+    tail = "\n".join(last.stderr.strip().splitlines()[-6:]) if last else ""
     sys.exit(
         "picchio: engine exited with code {}.\nLast lines:\n{}".format(
-            last.returncode, tail
+            last.returncode if last else "?", tail
         )
     )
 
@@ -2267,7 +2346,12 @@ def render_compare(names, a, b):
 
 
 def compare_cli(argv):
-    if argv[:1] in (["-h"], ["--help"]) or len(argv) != 2:
+    if argv[:1] in (["-h"], ["--help"]):
+        print("usage: picchio.py compare A.txt B.txt\n"
+              "each file holds one pasted verdict block (surrounding "
+              "forum text is fine)")
+        sys.exit(0)
+    if len(argv) != 2:
         sys.exit("picchio compare: usage: picchio.py compare A.txt B.txt\n"
                  "each file holds one pasted verdict block (surrounding "
                  "forum text is fine)")
@@ -3784,6 +3868,9 @@ def selftest():
             watch_verdict(watch_summary(flat), None)[0] == "GPU IDLE",
             parse_engine_version("version: 9430 (d48a56ef)") == "b9430",
             diagnose(cpu, cpu, "llama.cpp")[0] == "SILENT CPU FALLBACK",
+            # the runaway guard: a flood is capped and killed, not buffered
+            _run_capped([sys.executable, "-c", "print('x' * 2000000)"],
+                        10, 500000).capped,
         ]
         n_ok = sum(1 for c in checks if c)
         print("single-file mode (no examples/raw): logic self-checks "

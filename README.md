@@ -4,7 +4,7 @@
 
 <h1>picchio</h1>
 
-<p>One Python file that measures local LLMs: effective bits per weight, the three tok/s lanes, and silent CPU fallback.</p>
+<p>One executable Python file that measures local LLMs and leaves reproducible evidence.</p>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#install">Install</a> · <a href="#commands">Commands</a> · <a href="#the-quant-label">Quant</a> · <a href="#three-lanes">Lanes</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
+<p><a href="#install">Install</a> · <a href="#commands">Commands</a> · <a href="#agent-traces">Agent traces</a> · <a href="#the-quant-label">Quant</a> · <a href="#three-lanes">Lanes</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
 
 <img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: python3 picchio.py finds two models, runs three passes, and prints the 15 line verdict block, verdict HEALTHY">
 
@@ -37,8 +37,9 @@ whether the GPU did the work, and why.
 ## Install
 
 ```
-curl -fsSLO https://raw.githubusercontent.com/logxio/picchio/main/picchio.py
-python3 picchio.py
+curl -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio
+chmod +x picchio
+./picchio
 ```
 
 With no arguments it finds your models (ollama tags, the current
@@ -51,40 +52,51 @@ fixed prompt, the first one cold.
 About a minute here with the GPU engaged, a few minutes on CPU. It
 writes one cache file under `~/.cache/picchio` and nothing else.
 
-`python3 picchio.py --selftest` replays the raw engine logs in
+`./picchio --selftest` runs the bundled queue/parity recovery tests. A
+repository checkout also replays the raw engine logs in
 [examples/raw/](examples/raw/) and must reproduce every committed
 verdict block line for line; the badge runs it on every push. The
-lone downloaded file has no fixtures beside it, so there it runs the
-pure logic self-checks only and says so.
+downloaded zipapp is one file; its source stays modular under `src/`.
 
 ## Commands
 
-In the table, `picchio` stands for `python3 picchio.py`.
+In the table, `picchio` stands for `./picchio`.
 
 | command | what it does | real output |
 |---------|--------------|-------------|
+| `picchio diagnose TARGET --json` | explicit AI entry for one diagnosis; stdout is one JSON object, the human verdict stays on stderr | same evidence as the target rows below |
 | `picchio model.gguf` | full llama.cpp diagnosis: three passes, placement, cold start breakdown, verdict | [example](examples/healthy-metal.txt) |
 | `picchio qwen3.5:9b` | same passes through your local ollama server, placement from the memory split it reports | [example](examples/ollama-qwen35.txt) |
 | `picchio http://127.0.0.1:8080` | measures a llama-server already running, nothing launched, warm rows only | [example](examples/server-endpoint.txt) |
 | `picchio guard -- <command>` | wraps your own command, warns the moment layers land off the GPU, never kills it | [example](examples/guard-ngl0.txt) |
 | `picchio compare A.txt B.txt` | diffs two saved blocks variable by variable, the first config difference takes the blame | [example](examples/compare.txt) |
 | `picchio verify FILE` | flags a pasted block whose own numbers contradict each other | [block](examples/forged-block.txt) · [output](examples/verify-forged.txt) |
-| `picchio watch [PID] --for 8` | points the OS GPU meter at a process (or the whole GPU) for a window, no engine log parsing (macOS) | [example](examples/watch-ollama.txt) |
+| `picchio watch [PID\|ollama] --for 8 --json` | watches whole-GPU activity beside a process or loaded Ollama model without parsing or signaling it; stable JSON and raw JSONL are optional (macOS) | [example](examples/watch-ollama.txt) |
 | `picchio monitor TARGET` | probes a running llama-server url or ollama tag on a timer, flags any probe whose prefill/decode ratio collapses from that engine's own healthy baseline; `--json` for a pasteable session | [server](examples/monitor.txt) · [ollama+json](examples/monitor-ollama.txt) |
+| `picchio run SUITE.json` | runs or resumes a long queue, generic multi-round agent trace, or bare/product parity job; one final JSON plus a complete artifact directory | [trace](examples/agent-trace.md) · [manifest contract](docs/run-manifests.md) |
+| `picchio capabilities --json` | prints the stable command, schema and exit-code contract for Codex or Claude Code | machine JSON |
 | `picchio plan [MODEL]` | will it fit, priced from the gguf header; a decode estimate appears once one run is measured | [example](examples/plan-35b.txt) |
 | `picchio id MODEL` | splits the quant label: per tensor type mix, effective bits per weight, KV dtype, experts | [example](examples/id-35b.txt) |
 | `picchio --explain 36` | classifies a number you saw against the lanes measured here (cached rates, no rerun) | [example](examples/explain-36.txt) |
 | `picchio model.gguf --ctx-sweep` | re-measures the lanes at several context depths and reports the decay slope (9 full runs by default: 3 tiers x 3 passes, several minutes, not the ~1 min single run) | [example](examples/ctx-sweep.txt) |
 
-`watch` runs next to real work, launching nothing and unloading
-nothing; `--for` is the sampling window in seconds, `--engine
-ollama` names the model being judged. With no `--for`, a bare `watch`
-samples 6 s, but `watch PID` runs until that process exits (capped at
-an hour), so pass `--for` for a daemon you do not want to wait on:
+`watch` runs next to real work, launching, unloading and signaling
+nothing; `--for` is the sampling window in seconds, and positional
+`ollama` names the loaded model being judged (`--engine ollama` remains
+an alias). With no `--for`, a bare `watch` samples 6 s, but `watch PID`
+runs until that process exits (capped at an hour), so pass `--for` for
+a daemon you do not want to wait on:
 
 ```
-python3 picchio.py watch --engine ollama --for 8
+./picchio watch ollama --for 8 --json --keep-logs evidence/
 ```
+
+With `--json`, the human conclusion stays on stderr and stdout is one
+`picchio.watch.v1` object, ready for `json.loads`. `--keep-logs` writes
+`watch.samples.jsonl` and `watch.summary.json`; every sample carries a
+monotonic timestamp, GPU utilization, power and memory, with unavailable
+fields recorded as `null` and explained in `warnings`. These are whole-GPU
+measurements, never per-PID attribution.
 
 ```
 --passes N       measurement passes, first one cold (default 3, min 2)
@@ -93,10 +105,10 @@ python3 picchio.py watch --engine ollama --for 8
                  and on NVIDIA Linux
 --no-telemetry   skip the OS-side GPU sampling; the os line then
                  says the verdict rests on engine+timing only
---json           machine readable measurements after the block
+--json           JSON only on stdout; human verdict stays on stderr
 --bin PATH       llama.cpp binary to use; prefer llama-completion, the
                  one-shot binary, not the interactive llama-cli
---selftest       replay examples/raw, verify committed verdicts reproduce
+--selftest       verify bundled logic/recovery; a clone also replays raw logs
 --version        print version and measurement protocol
 ```
 
@@ -112,6 +124,44 @@ once both blocks parse; verify exits 0 when a block is
 self-consistent, 5 when its sources fight; watch exits 0 when the
 GPU is working, 4 when it sits idle; monitor exits 0 when every
 probe held the GPU, 4 when any probe caught a fallback.
+
+`run` uses the same numeric channel with job-specific meanings: 0 completed,
+2 could not run or incomplete, 3 runtime failure, 4 quality failure, 5 causal
+evidence conflict, 6 safety stop, 130 interrupted. Runtime success never
+upgrades quality success.
+
+## Long runs
+
+```
+./picchio run suite.json
+```
+
+That command creates `suite.picchio-run/` before work starts. It appends raw
+evidence, atomically commits each result, and updates a checkpoint. Run the
+same command after interruption: completed cases are skipped and unfinished
+cases get a new attempt without overwriting the old one.
+
+Queue artifacts separate runtime and quality, keep per-request input/output,
+server log references, memory/swap snapshots, whole-GPU JSONL and hourly
+throughput/thermal rollups. Parity runs the same fixtures through bare and
+product adapters. It emits a causal verdict only when model hash, runtime build,
+context, KV, sampling, task bytes, actual engine wire bytes, cache state and
+received process evidence all match. Parity is interleaved by default; failed
+causal evidence says `DIRECTIONAL` and exits 5.
+
+## Agent traces
+
+A command adapter can return a generic `picchio.agent-trace.v1`. Picchio keeps
+every round's real engine body, separates the last request's current context
+from cumulative prompt work, and writes both JSON and a neutral Markdown table.
+Component names are fixed (`system instructions`, `document context`, `tool
+schemas`, and the rest), never copied from an application's branding. If an app
+reports that it compacted below the threshold, the result says `FALSE POSITIVE`
+instead of leaving a cumulative token number open to interpretation. See the
+[rendered trace](examples/agent-trace.md) and complete [adapter
+contract](docs/run-manifests.md). Exact wire bodies stay in the local artifact
+directory and may contain private prompt or document content; redact them before
+sharing. The Markdown table contains counts and neutral categories only.
 
 ## The quant label
 

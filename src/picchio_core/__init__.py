@@ -1,0 +1,10 @@
+"""Modular long-run core bundled into Picchio's single-file zipapp."""
+
+RUN_SCHEMA = "picchio.run.v1"
+QUEUE_SCHEMA = "picchio.queue.manifest.v1"
+PARITY_SCHEMA = "picchio.parity.manifest.v1"
+ADAPTER_REQUEST_SCHEMA = "picchio.adapter.request.v1"
+ADAPTER_RESPONSE_SCHEMA = "picchio.adapter.response.v1"
+AGENT_TRACE_SCHEMA = "picchio.agent-trace.v1"
+CASE_RESULT_SCHEMA = "picchio.case-result.v1"
+CHECKPOINT_SCHEMA = "picchio.checkpoint.v1"

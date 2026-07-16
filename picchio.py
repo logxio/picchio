@@ -35,13 +35,16 @@
 #   python3 picchio.py verify block.txt
 #                                       (re-derive a pasted block's own
 #                                        physics; flag it if it lies)
-#   python3 picchio.py watch --engine ollama
+#   python3 picchio.py watch ollama --json --keep-logs evidence/
 #                                       (point the OS gpu meter at any
 #                                        running engine; no stderr parse)
 #   python3 picchio.py monitor qwen3.5:9b --json
 #                                       (probe a running server or ollama on
 #                                        a timer; flag any request the GPU
 #                                        dropped; --json to paste in an issue)
+#   python3 picchio.py run suite.json
+#                                       (run/resume a queue, generic agent
+#                                        trace, or bare/product parity job)
 #   python3 picchio.py model.gguf --ctx-sweep
 #                                       (re-measure at 4k/16k/32k context
 #                                        and report the decode decay slope)
@@ -75,6 +78,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# Clone checkout: modular sources live under src/. In the zipapp the same
+# package sits at archive root and zipimport resolves it without this path.
+_SOURCE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
+if os.path.isdir(_SOURCE_ROOT) and _SOURCE_ROOT not in sys.path:
+    sys.path.insert(0, _SOURCE_ROOT)
 
 VERSION = "0.1.0"
 # Measurement protocol tag, printed in the block footer. If the prompt
@@ -2522,11 +2531,14 @@ def verify_cli(argv):
 def pid_alive(pid):
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
         return True  # exists, just owned by another user
+    # Signal 0 also succeeds for a dead child waiting to be reaped. Treat
+    # that zombie as exited or watch PID can wait an hour after work ended.
+    state = _cmd_out(["ps", "-p", str(pid), "-o", "stat="]).strip()
+    return not state.startswith("Z") if state else True
 
 
 def proc_name(pid):
@@ -2549,20 +2561,22 @@ def ollama_loaded():
 
 
 def watch_summary(samples):
-    """Distills a raw sample window into the machine level numbers watch
-    reports: no baseline step (the process is already running, there is
-    no clean before), just what the GPU did over the window."""
+    """Machine-level aggregates, kept derivable from the raw JSONL."""
     dev = [s["dev"] for s in samples if s.get("dev") is not None]
     mem = [s["mem"] for s in samples if s.get("mem") is not None]
-    watts = [s.get("gpu_w") for s in samples]
+    watts = [s["gpu_w"] for s in samples if s.get("gpu_w") is not None]
     return {
         "n": len(samples),
         "secs": samples[-1]["t"] - samples[0]["t"] if len(samples) >= 2
         else 0.0,
         "work_med": _med(dev), "work_peak": max(dev) if dev else None,
         "work_min": min(dev) if dev else None,
-        "mem_gib": max(mem) / 1024 ** 3 if mem else None,
-        "watts": _med(watts), "throttled": False,
+        "mem_bytes": max(mem) if mem else None,
+        "watts": _med(watts), "watts_peak": max(watts) if watts else None,
+        "fell_idle": (min(dev) < 15 and max(dev) >= 50) if dev else None,
+        "available": {"utilization": len(dev), "power": len(watts),
+                      "memory": len(mem)},
+        "throttled": False,
     }
 
 
@@ -2613,16 +2627,74 @@ def render_watch(ctx, summ, state, para):
         parts.append("throttled")
     if parts:
         out.append("  gpu      " + ", ".join(parts))
-    if summ["mem_gib"] is not None:
+    if summ["mem_bytes"] is not None:
         out.append("  memory   {:.1f} GiB in use by the gpu".format(
-            summ["mem_gib"]))
+            summ["mem_bytes"] / 1024 ** 3))
     out += textwrap.wrap("{}: {}".format(state, para), width=WIDTH,
                          subsequent_indent="  ")
     return "\n".join(out)
 
 
-def watch(pid=None, engine=None, duration=None):
-    ctx = None
+def watch_sample_json(sample, t0):
+    return {
+        "monotonicSeconds": round(sample["t"], 6),
+        "elapsedSeconds": round(sample["t"] - t0, 6),
+        "gpuUtilizationPercent": sample.get("dev"),
+        "gpuPowerWatts": sample.get("gpu_w"),
+        "gpuMemoryBytes": sample.get("mem"),
+    }
+
+
+def watch_json(target, summ, state, exit_code, started, ended, stop_reason):
+    """Stable watch artifact. Field names carry units; null means absent."""
+    warnings = ["GPU metrics are whole-GPU, not per-process attribution."]
+    for key, label in (("utilization", "GPU utilization"),
+                       ("power", "GPU power"), ("memory", "GPU memory")):
+        missing = summ["n"] - summ["available"][key]
+        if missing:
+            warnings.append("{} was unavailable for {}/{} samples; raw "
+                            "fields are null.".format(label, missing,
+                                                       summ["n"]))
+    return {
+        "schema": "picchio.watch.v1", "tool": "picchio",
+        "version": VERSION, "protocol": PROTOCOL, "target": target,
+        "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started)),
+        "endedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended)),
+        "windowSeconds": round(summ["secs"], 3),
+        "sampling": {"frequencyHz": TELE_HZ, "sampleCount": summ["n"],
+                     "availableSamples": summ["available"]},
+        "gpu": {
+            "utilizationPercent": {"median": summ["work_med"],
+                                   "peak": summ["work_peak"]},
+            "powerWatts": {"median": summ["watts"],
+                           "peak": summ["watts_peak"]},
+            "memoryBytes": {"peak": summ["mem_bytes"]},
+            "fellIdleBetweenBursts": summ["fell_idle"],
+            "throttled": bool(summ["throttled"]),
+        },
+        "verdict": state, "exitCode": exit_code,
+        "stopReason": stop_reason, "attribution": "whole_gpu",
+        "warnings": warnings,
+    }
+
+
+def write_watch_logs(directory, samples, payload):
+    os.makedirs(directory, exist_ok=True)
+    sample_path = os.path.join(directory, "watch.samples.jsonl")
+    summary_path = os.path.join(directory, "watch.summary.json")
+    t0 = samples[0]["t"] if samples else 0.0
+    with open(sample_path, "w", encoding="utf-8") as f:
+        for sample in samples:
+            f.write(json.dumps(watch_sample_json(sample, t0)) + "\n")
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=1)
+        f.write("\n")
+
+
+def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
+    ctx, name = None, None
+    if pid is not None and engine is not None:
+        sys.exit("picchio watch: give a pid or an engine, not both.")
     if engine is not None:
         if engine != "ollama":
             sys.exit("picchio watch: only --engine ollama is supported "
@@ -2636,7 +2708,16 @@ def watch(pid=None, engine=None, duration=None):
     if pid is not None:
         if not pid_alive(pid):
             sys.exit("picchio watch: no process with pid {}.".format(pid))
-        ctx = "{} (pid {})".format(proc_name(pid), pid)
+        name = proc_name(pid)
+        ctx = "{} (pid {})".format(name, pid)
+    target = {"pid": pid, "name": name, "engine": engine}
+    if keep_dir:
+        try:
+            os.makedirs(keep_dir, exist_ok=True)
+        except OSError as e:
+            sys.exit("picchio watch: could not create {}: {}".format(
+                keep_dir, e))
+    started = time.time()
     sampler = telemetry_start()
     if not isinstance(sampler, GpuSampler):
         sys.exit("picchio watch: no gpu meter here ({}). watch needs the "
@@ -2656,35 +2737,61 @@ def watch(pid=None, engine=None, duration=None):
         " while " + ctx if ctx else "",
         "" if pid is not None and duration >= 3600 else
         " for {:.0f} s".format(duration)))
-    deadline = time.monotonic() + duration
+    deadline, stop_reason = time.monotonic() + duration, "duration_elapsed"
     try:
         while True:
             now = time.monotonic()
-            if now >= deadline or (pid is not None and not pid_alive(pid)):
+            if now >= deadline:
+                break
+            if pid is not None and not pid_alive(pid):
+                stop_reason = "target_exited"
                 break
             time.sleep(min(0.25, deadline - now))
     except KeyboardInterrupt:
-        pass
+        stop_reason = "interrupted"
+        sys.stderr.write("\n")
     sampler.stop()
     summ = watch_summary(sampler.samples)
     summ["throttled"] = sampler._hot or thermal_raised()
     state, para = watch_verdict(summ, ctx)
-    print(colorize(render_watch(ctx, summ, state, para)))
-    # reuse the measure exit map's meaning: the gpu doing the work is 0,
-    # the gpu sitting idle while tokens are made is the fallback code (4)
-    sys.exit({"GPU IDLE": 4}.get(state, 0))
+    code = 4 if state == "GPU IDLE" else 0
+    payload = watch_json(target, summ, state, code, started, time.time(),
+                         stop_reason)
+    write_error = None
+    if keep_dir:
+        try:
+            write_watch_logs(keep_dir, sampler.samples, payload)
+        except OSError as e:
+            write_error, code = e, 2
+            payload["exitCode"] = code
+            payload["warnings"].append("Evidence write failed: {}".format(e))
+    human = render_watch(ctx, summ, state, para)
+    if as_json:
+        sys.stderr.write(colorize(human, sys.stderr) + "\n")
+        print(json.dumps(payload, indent=1))
+    else:
+        print(colorize(human))
+    if write_error:
+        sys.stderr.write("picchio watch: could not write evidence in {}: {}\n"
+                         .format(keep_dir, write_error))
+    sys.exit(code)
 
 
 def watch_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py watch [PID] [--engine ollama] [--for SEC]\n"
+        print("usage: picchio.py watch [PID|ollama] [--for SEC] [--json] "
+              "[--keep-logs DIR]\n"
               "point the os gpu meter at a running inference process (or\n"
               "the whole gpu) and report whether the gpu is doing the work,\n"
               "without parsing any engine's output. engine agnostic: works\n"
-              "for mlx, lm studio, anything. macOS only (needs ioreg).")
+              "for mlx, lm studio, anything. macOS only (needs ioreg).\n"
+              "--json keeps this human conclusion on stderr and writes a\n"
+              "picchio.watch.v1 summary to stdout. --keep-logs writes\n"
+              "watch.samples.jsonl and watch.summary.json. --engine ollama\n"
+              "remains accepted as an alias for positional ollama.")
         sys.exit(0)
-    pid = engine = dur = None
-    i = 0
+    pid = engine = dur = keep = None
+    as_json, i = False, 0
     while i < len(argv):
         a = argv[i]
         if a == "--for" and i + 1 < len(argv):
@@ -2692,16 +2799,24 @@ def watch_cli(argv):
                 dur = float(argv[i + 1])
             except ValueError:
                 sys.exit("picchio watch: --for wants a number of seconds.")
+            if not dur > 0:
+                sys.exit("picchio watch: --for wants a positive number.")
             i += 2
         elif a == "--engine" and i + 1 < len(argv):
             engine, i = argv[i + 1], i + 2
-        elif a.isdigit():
+        elif a == "--json":
+            as_json, i = True, i + 1
+        elif a == "--keep-logs" and i + 1 < len(argv):
+            keep, i = argv[i + 1], i + 2
+        elif a.isdigit() and pid is None and engine is None:
             pid, i = int(a), i + 1
+        elif not a.startswith("-") and pid is None and engine is None:
+            engine, i = a, i + 1
         else:
             sys.exit("picchio watch: unexpected argument {!r}.\nusage: "
-                     "picchio.py watch [PID] [--engine ollama] "
-                     "[--for SEC]".format(a))
-    watch(pid, engine, dur)
+                     "picchio.py watch [PID|ollama] [--for SEC] [--json] "
+                     "[--keep-logs DIR]".format(a))
+    watch(pid, engine, dur, keep, as_json)
 
 
 # ------------------------------------------------------------------ monitor
@@ -3873,10 +3988,15 @@ def selftest():
                         10, 500000).capped,
         ]
         n_ok = sum(1 for c in checks if c)
+        from picchio_core.selftest import run_selftests
+        core_ok, core_all, core_failures = run_selftests(
+            [sys.executable, os.path.abspath(sys.argv[0])])
         print("single-file mode (no examples/raw): logic self-checks "
-              "{}/{}; clone the repo for the full fixture replay".format(
-                  n_ok, len(checks)))
-        sys.exit(0 if n_ok == len(checks) else 1)
+              "{}/{}, queue/parity {}/{}; clone the repo for the full "
+              "fixture replay".format(n_ok, len(checks), core_ok, core_all))
+        if core_failures:
+            print("queue/parity failures: " + ", ".join(core_failures))
+        sys.exit(0 if n_ok == len(checks) and core_ok == core_all else 1)
     fx_ok = fx_all = rp_ok = rp_all = 0
     for name in sorted(os.listdir(rawroot)):
         d = os.path.join(rawroot, name)
@@ -4040,30 +4160,47 @@ def selftest():
     iv, iff = verify_block(parse_block(inv))
     if iv == "FLAG" and any("outrun" in x for x in iff):
         ve_ok += 1
-    # watch: synthetic sample windows pushed through the real summary and
-    # the real machine level judge (no gpu needed, ci safe)
-    wa_ok, wa_all = 0, 3
+    # watch: five required synthetic paths through the stable JSON contract
+    # and the real machine-level judge (no gpu needed, ci safe)
+    wa_ok, wa_all = 0, 5
 
     def synth_watch(dev_seq, mem, watt):
         return [{"t": i * 0.25, "dev": d, "mem": mem, "gpu_w": watt}
                 for i, d in enumerate(dev_seq)]
 
-    # 1: a busy window reads BUSY and states the whole-gpu caveat
-    sb, pb = watch_verdict(watch_summary(
-        synth_watch([0, 98, 99, 97, 99, 98], int(6.5 * gib), 12.0)),
-        "runner (pid 1)")
-    if sb == "GPU BUSY" and "machine level" in pb:
+    target = {"pid": 1, "name": "runner", "engine": None}
+    watch_busy = watch_summary(synth_watch(
+        [0, 98, 99, 97, 99, 98], int(6.5 * gib), 12.0))
+    sb, pb = watch_verdict(watch_busy, "runner (pid 1)")
+    jb = watch_json(target, watch_busy, sb, 0, 0, 2, "duration_elapsed")
+    # 1 busy: JSON parses, verdict/exit agree, whole-gpu attribution stays
+    if json.loads(json.dumps(jb))["exitCode"] == 0 \
+            and sb == "GPU BUSY" and "machine level" in pb \
+            and jb["attribution"] == "whole_gpu":
         wa_ok += 1
-    # 2: a flat window reads IDLE and names the cpu
-    si, pi = watch_verdict(watch_summary(
-        synth_watch([1, 2, 0, 3, 1, 2], 600 * 1024 ** 2, 0.03)),
-        "runner (pid 1)")
-    if si == "GPU IDLE" and "on the cpu" in pi:
+    watch_idle = watch_summary(synth_watch(
+        [1, 2, 0, 3, 1, 2], 600 * 1024 ** 2, 0.03))
+    si, pi = watch_verdict(watch_idle, "runner (pid 1)")
+    # 2 idle: fallback exit 4 is in the artifact
+    if si == "GPU IDLE" and "on the cpu" in pi \
+            and watch_json(target, watch_idle, si, 4, 0, 2,
+                           "duration_elapsed")["exitCode"] == 4:
         wa_ok += 1
-    # 3: a middling window reads MIXED, not a false BUSY or IDLE
-    sm, _ = watch_verdict(watch_summary(
-        synth_watch([30, 35, 28, 40, 33], int(4.0 * gib), 6.0)), None)
-    if sm == "GPU MIXED":
+    # 3 unavailable: null is preserved in raw+summary and warnings name it
+    watch_missing = watch_summary(synth_watch([80, 90, 95], None, None))
+    jm = watch_json(target, watch_missing, "GPU BUSY", 0, 0, 1,
+                    "duration_elapsed")
+    raw_missing = watch_sample_json(synth_watch([80], None, None)[0], 0.0)
+    if jm["gpu"]["powerWatts"]["median"] is None \
+            and raw_missing["gpuMemoryBytes"] is None \
+            and any("power" in x for x in jm["warnings"]):
+        wa_ok += 1
+    # 4 target exit and 5 SIGINT both still close a complete summary
+    if watch_json(target, watch_busy, sb, 0, 0, 1,
+                  "target_exited")["stopReason"] == "target_exited":
+        wa_ok += 1
+    if watch_json(target, watch_busy, sb, 0, 0, 1,
+                  "interrupted")["stopReason"] == "interrupted":
         wa_ok += 1
     # monitor: the per probe signature classifier and the session summary,
     # both pure, so ci needs no live server
@@ -4601,23 +4738,29 @@ def selftest():
         vp_ok += 1
     if parse_engine_version("") == "(version unknown)":
         vp_ok += 1
+    from picchio_core.selftest import run_selftests
+    core_ok, core_all, core_failures = run_selftests(
+        [sys.executable, os.path.abspath(sys.argv[0])])
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
           "telemetry {}/{}, verify {}/{}, watch {}/{}, monitor {}/{}, "
           "sweep {}/{}, server {}/{}, linux {}/{}, silent-engine {}/{}, "
           "curves {}/{}, plan {}/{}, id {}/{}, argv {}/{}, version {}/{}, "
-          "onboarding {}/{}".format(
+          "onboarding {}/{}, queue/parity {}/{}".format(
               fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all, te_ok, te_all,
               ve_ok, ve_all, wa_ok, wa_all, mo_ok, mo_all, sw_ok, sw_all,
               sv_ok, sv_all, lx_ok, lx_all, se_ok, se_all, rc_ok, rc_all,
               pl_ok, pl_all, id_ok, id_all, av_ok, av_all, vp_ok, vp_all,
-              gd_ok, gd_all))
+              gd_ok, gd_all, core_ok, core_all))
+    if core_failures:
+        print("queue/parity failures: " + ", ".join(core_failures))
     sys.exit(0 if fx_ok == fx_all and rp_ok == rp_all and rp_all
              and cp_ok == cp_all and te_ok == te_all
              and ve_ok == ve_all and wa_ok == wa_all and mo_ok == mo_all
              and sw_ok == sw_all and sv_ok == sv_all
              and lx_ok == lx_all and se_ok == se_all and rc_ok == rc_all
              and pl_ok == pl_all and id_ok == id_all and av_ok == av_all
-             and vp_ok == vp_all and gd_ok == gd_all else 1)
+             and vp_ok == vp_all and gd_ok == gd_all
+             and core_ok == core_all else 1)
 
 
 # -------------------------------------------------------------------- main
@@ -4706,6 +4849,28 @@ def load_cache():
 
 
 def main():
+    if sys.argv[1:2] == ["run"]:
+        from picchio_core.cli import run_cli
+        run_cli(sys.argv[2:], {
+            "version": VERSION, "protocol": PROTOCOL,
+            "telemetry_start": telemetry_start,
+        })
+        return
+    if sys.argv[1:2] == ["capabilities"]:
+        from picchio_core.cli import capabilities_cli
+        capabilities_cli(sys.argv[2:], VERSION, PROTOCOL)
+        return
+    # The explicit verb is the stable AI entry. Legacy positional model
+    # invocation stays valid. "ollama" means the one model already resident,
+    # not a model tag literally named ollama.
+    if sys.argv[1:2] == ["diagnose"]:
+        rest = sys.argv[2:]
+        if rest[:1] == ["ollama"]:
+            loaded, why = ollama_loaded()
+            if not loaded:
+                sys.exit("picchio diagnose: {}.".format(why))
+            rest = [loaded] + rest[1:]
+        sys.argv = [sys.argv[0]] + rest
     # guard wraps an arbitrary user command, so its arguments must not
     # pass through the measurement mode parser: dispatch on the word
     if sys.argv[1:2] == ["guard"]:
@@ -4771,10 +4936,11 @@ def main():
             "  and the headline do not describe the same run\n"
             "\n"
             "watch mode:\n"
-            "  picchio.py watch [PID] [--engine ollama] [--for SEC]\n"
+            "  picchio.py watch [PID|ollama] [--for SEC] [--json]\n"
             "  point the os gpu meter at a running process or the whole\n"
             "  gpu and report whether the gpu is doing the work, without\n"
-            "  parsing any engine's output (works for mlx, lm studio, ...)\n"
+            "  parsing engine output. --json is a clean stdout summary;\n"
+            "  --keep-logs DIR saves its raw samples and the same summary\n"
             "\n"
             "monitor mode:\n"
             "  picchio.py monitor TARGET [--every SEC] [--for SEC] [--json]\n"
@@ -4783,6 +4949,13 @@ def main():
             "  baseline, the intermittent fallback a single snapshot cannot\n"
             "  catch. TARGET is a llama-server url or an ollama tag; --json\n"
             "  prints a session summary you can paste into an issue\n"
+            "\n"
+            "run mode:\n"
+            "  picchio.py run MANIFEST [--artifact DIR]\n"
+            "  run or resume a queue/parity manifest, including optional\n"
+            "  multi-round agent traces; progress is stderr, stdout is one\n"
+            "  final JSON, and every raw receipt stays in the artifact\n"
+            "  directory\n"
             "\n"
             "ctx sweep:\n"
             "  picchio.py model.gguf --ctx-sweep [4096,16384,32768]\n"
@@ -4822,7 +4995,8 @@ def main():
                     help="classify a tok/s number you saw somewhere against "
                          "this machine's measured rates")
     ap.add_argument("--json", action="store_true",
-                    help="print raw measurements as JSON after the verdict")
+                    help="write only JSON to stdout; human verdict goes to "
+                         "stderr")
     ap.add_argument("--keep-logs", metavar="DIR",
                     help="save the raw engine output of each pass into DIR "
                          "(the evidence behind the verdict)")
@@ -4986,7 +5160,14 @@ def main():
     block = render_verdict(mach, engine_str, model_name, passes, state,
                            para, mode, explain_part, cold_note, why,
                            block_ctx, args.extra, tele)
-    print(colorize(block))
+    codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
+             "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,
+             "CONFLICTING EVIDENCE": 5}
+    exit_code = codes.get(state, 0)
+    if args.json:
+        sys.stderr.write(colorize(block, sys.stderr) + "\n")
+    else:
+        print(colorize(block))
 
     if mode == "server" and url_is_local(binpath) \
             and not rep.get("model_bytes"):
@@ -5019,19 +5200,20 @@ def main():
     }, measurement_key(mode, args.model))
 
     if args.json:
-        print(json.dumps({"machine": mach, "engine": engine_str,
+        print(json.dumps({"schema": "picchio.diagnose.v1",
+                          "machine": mach, "engine": engine_str,
                           "model": model_name, "mode": mode,
                           "protocol": PROTOCOL, "passes": passes,
                           "warm_median": rates, "state": state,
-                          "why": why, "telemetry": tele}, indent=1))
+                          "why": why, "telemetry": tele,
+                          "exitCode": exit_code,
+                          "evidenceDirectory": os.path.abspath(logdir)
+                          if logdir else None}, indent=1))
 
-    codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
-             "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,
-             "CONFLICTING EVIDENCE": 5}
-    sys.exit(codes.get(state, 0))
+    sys.exit(exit_code)
 
 
-if __name__ == "__main__":
+def entrypoint():
     try:
         main()
     except SystemExit as e:
@@ -5047,3 +5229,7 @@ if __name__ == "__main__":
             sys.stderr.write(e.code.rstrip("\n") + "\n")
             raise SystemExit(2)
         raise
+
+
+if __name__ == "__main__":
+    entrypoint()

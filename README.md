@@ -223,12 +223,16 @@ the matrix did surface was this silent fallback.
 
 While the passes run, a background thread reads the OS's own GPU
 meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
-counters, minus the sudo; on NVIDIA Linux, the driver's NVML. That
-is the `os` line. A full offload claim over a GPU the OS saw stay
-flat is CONFLICTING EVIDENCE (exit 5). A build that prints no gpu
-evidence while the meter watches the gpu stay idle is SILENT CPU
-FALLBACK (exit 4), measured on a real mis-built binary. A missing
-source abstains; the line says which evidence is left.
+counters, minus the sudo; on NVIDIA Linux, the driver's NVML; on AMD
+Linux, the amdgpu driver's own sysfs counters, no ROCm install
+needed. That is the `os` line. A full offload claim over a GPU the
+OS saw stay flat is CONFLICTING EVIDENCE (exit 5). A build that
+prints no gpu evidence while the meter watches the gpu stay idle is
+SILENT CPU FALLBACK (exit 4), measured on a real mis-built binary.
+A run that measured nothing at all is NO TIMING EVIDENCE (exit 7):
+the lanes say `n/a` because nothing was read, not because the answer
+was zero, and no verdict is offered over them. A missing source
+abstains; the line says which evidence is left.
 
 ## llama-bench
 
@@ -278,9 +282,13 @@ pass's 19 seconds went to reading 20.6 GiB of weights. The
 ## Limits
 
 - Tested: one Apple Silicon machine (llama.cpp and ollama) plus
-  one rented Linux RTX 4090 (CUDA). ollama on Linux and Vulkan
-  parsing have not touched real hardware; if you run those, I want
-  the verdict block either way.
+  one rented Linux RTX 4090 (CUDA). ollama on Linux, Vulkan parsing
+  and the AMD meter have not touched real hardware; if you run
+  those, I want the verdict block either way.
+- The AMD meter reads the amdgpu counters directly, but its judging
+  thresholds are the ones calibrated on NVML and ioreg. Nothing has
+  checked them against a real Radeon yet, so a surprising AMD
+  verdict is worth reporting rather than believing.
 - The full verdict block is llama.cpp and ollama only. MLX, LM
   Studio and other engines get placement truth through `watch`,
   not the lane table.
@@ -292,8 +300,14 @@ pass's 19 seconds went to reading 20.6 GiB of weights. The
 - Warm numbers drift between sessions: the 9B medians in this repo
   moved 5 to 8% between two recording rounds on an idle machine.
   `--passes 5` tightens a single reading.
-- The os meter counts the whole GPU (index 0 on Linux), so it only
-  judges runs that started from an idle GPU.
+- The os meter counts whole GPUs, not this process's share, so it
+  only judges runs that started from an idle GPU. On a multi card
+  box the cards collapse to one reading per tick: utilization takes
+  the highest card, memory and power the sum.
+- The engine's numbers are read back out of its log, so picchio runs
+  it with `LC_NUMERIC=C`. Without that pin a comma decimal locale
+  makes llama.cpp print `28,53 GiB` and every lane comes back empty.
+  Logs captured elsewhere are read either way.
 
 ## License
 

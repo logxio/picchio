@@ -93,6 +93,6 @@ def capabilities_cli(argv, version, protocol):
         "exitCodes": {"0": "pass/completed", "2": "could not run",
                       "3": "runtime failure", "4": "quality failure",
                       "5": "conflicting evidence", "6": "safety stop",
-                      "130": "interrupted"},
+                      "7": "measured nothing", "130": "interrupted"},
     }
     print(json.dumps(value, indent=1))

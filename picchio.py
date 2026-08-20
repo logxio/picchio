@@ -72,6 +72,7 @@ import statistics
 import struct
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -85,6 +86,8 @@ _SOURCE_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if os.path.isdir(_SOURCE_ROOT) and _SOURCE_ROOT not in sys.path:
     sys.path.insert(0, _SOURCE_ROOT)
 
+from picchio_core import gpu_meters  # noqa: E402  (needs the path above)
+
 VERSION = "0.1.0"
 # Measurement protocol tag, printed in the block footer. If the prompt
 # size, generation length, pass structure or aggregation ever change,
@@ -92,6 +95,14 @@ VERSION = "0.1.0"
 # if they were one series.
 PROTOCOL = "mp1"
 WIDTH = 66
+# The exit code contract, in one place because it is a public one: the
+# global picchio skill and every script that shells out reads these.
+# 0 also covers the states where picchio cannot prove placement but did
+# measure rates; 7 is the one where it measured nothing at all. 6 is
+# taken by run's safety stop and the two families share one table.
+EXIT_CODES = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
+              "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,
+              "CONFLICTING EVIDENCE": 5, "NO TIMING EVIDENCE": 7}
 N_PREDICT = 128
 CTX = 4096
 CACHE_PATH = os.path.expanduser("~/.cache/picchio/last.json")
@@ -158,7 +169,7 @@ def machine_info():
             # the gpu belongs in the machine fingerprint on linux; the
             # nvml name (display form) rides the chip field so every
             # footer and cache entry carries it without a new column
-            gpu = _NVML().device_name()
+            gpu = gpu_meters.machine_gpu_name()
             if gpu:
                 info["chip"] = "{} + {}".format(info["chip"], gpu) \
                     if info["chip"] else gpu
@@ -198,14 +209,58 @@ def finish_rates(d):
     return d
 
 
+def _num(tok):
+    """A number out of engine output, dot or comma decimal. llama.cpp
+    reaches setlocale(LC_ALL, "") through console::init before it prints
+    its timings, so on a de_DE or fr_FR box every "%.2f" field arrives as
+    "28,53" and a dot-only parser reads nothing at all (issue #1: three
+    passes, every lane n/a, and a verdict printed anyway). Our own runs
+    now pin LC_NUMERIC=C, but logs captured on someone else's machine
+    still land here that way. The rightmost separator is the decimal
+    point and an earlier one is a thousands group; llama.cpp prints these
+    with a plain %f and never groups, so this only ever undoes a locale."""
+    tok = (tok or "").strip()
+    cut = max(tok.rfind("."), tok.rfind(","))
+    if cut >= 0:
+        tok = tok[:cut].replace(".", "").replace(",", "") \
+            + "." + tok[cut + 1:]
+    try:
+        return float(tok)
+    except ValueError:
+        return None
+
+
+def _vendorless(name):
+    """Display form of a GPU name: the vendor word drops so the gpu line
+    holds the 66 column budget ("ROCm: AMD Radeon RX 7900 XTX" is one
+    column over on its own). The raw name stays in the kept log."""
+    return re.sub(r"^(NVIDIA|AMD)\s+", "", (name or "").strip())
+
+
+def _dotted(s):
+    """An engine field rewritten in the decimal style the rest of the
+    block uses. Text that is already dot formatted passes through
+    untouched, so every committed fixture renders exactly as before."""
+    if not s or "," not in s:
+        return s
+    m = re.match(r"([\d.,]+)(.*)", s, re.S)
+    n = _num(m.group(1)) if m else None
+    if n is None:
+        return s
+    return "{:.2f}".format(n).rstrip("0").rstrip(".") + m.group(2)
+
+
 def size_bytes(s):
     """'5.28 GiB' -> bytes, None when the unit is unfamiliar."""
-    m = re.match(r"([\d.]+)\s*([KMG]i?B|B)", s or "", re.I)
+    m = re.match(r"([\d.,]+)\s*([KMG]i?B|B)", s or "", re.I)
     if not m:
+        return None
+    n = _num(m.group(1))
+    if n is None:
         return None
     mult = {"b": 1, "kib": 1024, "kb": 1000, "mib": 1024 ** 2,
             "mb": 1000 ** 2, "gib": 1024 ** 3, "gb": 1000 ** 3}
-    return int(float(m.group(1)) * mult[m.group(2).lower()])
+    return int(n * mult[m.group(2).lower()])
 
 
 def keep_log(path, text):
@@ -271,16 +326,16 @@ RUN_CAP = 32 * 1024 * 1024  # hard cap on one engine run's captured output.
 # a few MB at most), so only a runaway ever trips it.
 
 
-def _run_capped(args, timeout, cap):
+def _run_capped(args, timeout, cap, env=None):
     """subprocess.run(capture_output=True) with a hard byte cap: the child
     is killed the instant its captured output passes `cap`, so a runaway
     interactive binary cannot exhaust memory or hang for the full timeout.
     Returns an object with .returncode, .stdout, .stderr, .capped and
     .timedout. Both pipes are drained by threads so neither can deadlock on
-    a full OS buffer."""
+    a full OS buffer. env replaces the child's environment when given."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, errors="replace")
+                            text=True, errors="replace", env=env)
     buf = {"out": [], "err": [], "n": 0, "capped": False}
     lock = threading.Lock()
 
@@ -328,6 +383,20 @@ def _run_capped(args, timeout, cap):
     return r
 
 
+def engine_env():
+    """The engine's environment with the decimal point pinned. llama.cpp
+    calls setlocale(LC_ALL, "") in common/console.cpp before it prints
+    the timings picchio measures with, so on a comma-decimal locale the
+    whole lane table comes back empty. LC_NUMERIC is the surgical pin: a
+    blanket LC_ALL=C would also reset LC_CTYPE and change how the engine
+    handles the UTF-8 it generates. LC_ALL has to go with it because it
+    outranks every LC_* category."""
+    env = dict(os.environ)
+    env.pop("LC_ALL", None)
+    env["LC_NUMERIC"] = "C"
+    return env
+
+
 def run_llama_pass(binpath, model, extra_args, log_path=None,
                    prompt=BENCH_PROMPT, ctx=CTX):
     base = [
@@ -349,7 +418,8 @@ def run_llama_pass(binpath, model, extra_args, log_path=None,
     last = None
     for args in attempts:
         t0 = time.monotonic()
-        r = _run_capped(args + extra_args, 1800, RUN_CAP)
+        r = _run_capped(args + extra_args, 1800, RUN_CAP,
+                        env=engine_env())
         wall_s = time.monotonic() - t0
         if r.capped:
             # a flood, not a slow run: the binary went interactive and
@@ -382,8 +452,9 @@ def run_llama_pass(binpath, model, extra_args, log_path=None,
 def parse_stderr(text, wall_s):
     d = blank_pass()
     d["wall_s"] = wall_s
-    re_load = re.compile(r"load time\s*=\s*([\d.]+)\s*ms")
-    re_pair = re.compile(r"=\s*([\d.]+)\s*ms\s*/\s*(\d+)\s*(?:tokens|runs)")
+    re_load = re.compile(r"load time\s*=\s*([\d.,]+)\s*ms")
+    re_pair = re.compile(
+        r"=\s*([\d.,]+)\s*ms\s*/\s*(\d+)\s*(?:tokens|runs)")
     re_off = re.compile(r"offloaded\s+(\d+)/(\d+)\s+layers to GPU")
     re_metal = re.compile(r"ggml_metal_init: found device:\s*(.+)")
     re_cuda = re.compile(r"Device\s+\d+:\s*([^,]+),")
@@ -392,8 +463,8 @@ def parse_stderr(text, wall_s):
     # naming the device (no ggml_cuda_init, no "Device 0:" lines exist
     # there, verified on the 4090 fixtures)
     re_cuda_dev = re.compile(r"using device CUDA\d+ \(([^)]+)\)")
-    re_params = re.compile(r"model params\s*=\s*([\d.]+\s*\S?)")
-    re_size = re.compile(r"file size\s*=\s*([\d.]+\s*\S+)")
+    re_params = re.compile(r"model params\s*=\s*([\d.,]+\s*\S?)")
+    re_size = re.compile(r"file size\s*=\s*([\d.,]+\s*\S+)")
     re_threads = re.compile(r"n_threads\s*=\s*(\d+).*?/\s*(\d+)")
     # e.g. "using device MTL0 (Apple M5) (unknown id) - 25558 MiB free":
     # the free figure the engine itself saw, kept for WHY attribution.
@@ -412,17 +483,17 @@ def parse_stderr(text, wall_s):
         if "prompt eval time" in line:
             m = re_pair.search(line)
             if m:
-                d["prompt_ms"] = float(m.group(1))
+                d["prompt_ms"] = _num(m.group(1))
                 d["prompt_tokens"] = int(m.group(2))
         elif "eval time" in line:
             m = re_pair.search(line)
             if m:
-                d["eval_ms"] = float(m.group(1))
+                d["eval_ms"] = _num(m.group(1))
                 d["eval_tokens"] = int(m.group(2))
         elif "load time" in line:
             m = re_load.search(line)
             if m:
-                d["load_ms"] = float(m.group(1))
+                d["load_ms"] = _num(m.group(1))
         m = re_off.search(line)
         if m:
             d["offload_n"] = int(m.group(1))
@@ -434,23 +505,27 @@ def parse_stderr(text, wall_s):
         m = re_cuda_dev.search(line)
         if m and not d["gpu_device"]:
             d["gpu_kind"] = "CUDA"
-            # display form: the NVIDIA prefix drops so the gpu line
-            # holds the 66 column budget; the raw line is in the log
-            d["gpu_device"] = re.sub(r"^NVIDIA\s+", "",
-                                     m.group(1).strip())
-        if "ggml_cuda_init" in line or "CUDA devices" in line:
+            d["gpu_device"] = _vendorless(m.group(1))
+        if "ROCm devices" in line:
+            # a HIP build compiles the cuda backend and announces itself
+            # as "ggml_cuda_init: found 3 ROCm devices" (GGML_CUDA_NAME,
+            # ggml/src/ggml-cuda/ggml-cuda.cu). The log says ROCm, so
+            # the block says ROCm; calling an AMD card CUDA would be the
+            # one line in it that a reader knows is wrong.
+            d["gpu_kind"] = "ROCm"
+        elif "ggml_cuda_init" in line or "CUDA devices" in line:
             d["gpu_kind"] = d["gpu_kind"] or "CUDA"
         m = re_cuda.search(line)
-        if m and d["gpu_kind"] == "CUDA" and not d["gpu_device"]:
-            d["gpu_device"] = m.group(1).strip()
+        if m and d["gpu_kind"] in ("CUDA", "ROCm") and not d["gpu_device"]:
+            d["gpu_device"] = _vendorless(m.group(1))
         if "ggml_vulkan" in line.lower() and not d["gpu_kind"]:
             d["gpu_kind"] = "Vulkan"
         m = re_params.search(line)
         if m:
-            d["model_params"] = m.group(1).strip()
+            d["model_params"] = _dotted(m.group(1).strip())
         m = re_size.search(line)
         if m:
-            d["model_size"] = m.group(1).strip()
+            d["model_size"] = _dotted(m.group(1).strip())
             d["model_bytes"] = size_bytes(d["model_size"])
         if "system_info" in line:
             m = re_threads.search(line)
@@ -980,254 +1055,29 @@ TELE_HZ = 4.0  # one ioreg call costs 14-18 ms on the test machine; the
                # measured decode disturbance at 4 Hz is in README limits
 TELE_PAD_S = 0.3  # decode ends about this long before the process does
 
-RE_TELE = {
-    "dev": re.compile(r'"Device Utilization %"=(\d+)'),
-    "ren": re.compile(r'"Renderer Utilization %"=(\d+)'),
-    "til": re.compile(r'"Tiler Utilization %"=(\d+)'),
-    "mem": re.compile(r'"In use system memory"=(\d+)'),
-}
-
-
-def read_gpu_stats():
-    """One ioreg sample, or None when there is nothing to read."""
-    try:
-        r = subprocess.run(
-            ["ioreg", "-r", "-d", "1", "-c", "IOAccelerator"],
-            capture_output=True, text=True, timeout=5)
-    except Exception:
-        return None
-    m = re.search(r'"PerformanceStatistics" = \{(.*)\}', r.stdout)
-    if not m:
-        return None
-    s = {"t": time.monotonic()}
-    for key, rx in RE_TELE.items():
-        mm = rx.search(m.group(1))
-        s[key] = int(mm.group(1)) if mm else None
-    return s if s["dev"] is not None else None
-
-
-class _IOReport:
-    """GPU power without sudo: IOReport is the private framework that
-    powermetrics itself reads, and its energy counters answer any
-    process. Private means it can move between macOS versions, so every
-    call is guarded; when anything is missing or NULL, power quietly
-    stays off the os line and nothing else changes."""
-
-    SCALE = {"mJ": 1e-3, "uJ": 1e-6, "nJ": 1e-9}
-
-    def __init__(self):
-        p = ctypes.c_void_p
-        self.cf = ctypes.CDLL("/System/Library/Frameworks/"
-                              "CoreFoundation.framework/CoreFoundation")
-        self.io = ctypes.CDLL("/usr/lib/libIOReport.dylib")
-        for lib, name, res, args in (
-            (self.cf, "CFStringCreateWithCString", p,
-             [p, ctypes.c_char_p, ctypes.c_uint32]),
-            (self.cf, "CFStringGetCString", ctypes.c_bool,
-             [p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]),
-            (self.cf, "CFDictionaryGetValue", p, [p, p]),
-            (self.cf, "CFArrayGetCount", ctypes.c_long, [p]),
-            (self.cf, "CFArrayGetValueAtIndex", p, [p, ctypes.c_long]),
-            (self.cf, "CFRelease", None, [p]),
-            (self.io, "IOReportCopyChannelsInGroup", p,
-             [p, p, ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64]),
-            (self.io, "IOReportCreateSubscription", p,
-             [p, p, ctypes.POINTER(p), ctypes.c_uint64, p]),
-            (self.io, "IOReportCreateSamples", p, [p, p, p]),
-            (self.io, "IOReportCreateSamplesDelta", p, [p, p, p]),
-            (self.io, "IOReportChannelGetChannelName", p, [p]),
-            (self.io, "IOReportChannelGetUnitLabel", p, [p]),
-            (self.io, "IOReportSimpleGetIntegerValue", ctypes.c_int64,
-             [p, ctypes.POINTER(ctypes.c_int32)]),
-        ):
-            fn = getattr(lib, name)
-            fn.restype, fn.argtypes = res, args
-        chans = self.io.IOReportCopyChannelsInGroup(
-            self._cfstr("Energy Model"), None, 0, 0, 0)
-        if not chans:
-            raise OSError("no Energy Model channels")
-        subbed = ctypes.c_void_p()
-        self._sub = self.io.IOReportCreateSubscription(
-            None, chans, ctypes.byref(subbed), 0, None)
-        if not self._sub:
-            raise OSError("IOReport subscription failed")
-        self._subbed = subbed
-        self._key = self._cfstr("IOReportChannels")
-        self._prev = self.io.IOReportCreateSamples(self._sub, subbed, None)
-        self._t_prev = time.monotonic()
-
-    def _cfstr(self, s):
-        return self.cf.CFStringCreateWithCString(None, s.encode(),
-                                                 0x08000100)
-
-    def _pystr(self, ref):
-        buf = ctypes.create_string_buffer(128)
-        if ref and self.cf.CFStringGetCString(ref, buf, 128, 0x08000100):
-            return buf.value.decode()
-        return None
-
-    def watts(self):
-        """Average GPU watts since the previous call, or None."""
-        cur = self.io.IOReportCreateSamples(self._sub, self._subbed, None)
-        t = time.monotonic()
-        if not cur or t <= self._t_prev:
-            return None
-        delta = self.io.IOReportCreateSamplesDelta(self._prev, cur, None)
-        w = None
-        arr = self.cf.CFDictionaryGetValue(delta, self._key) \
-            if delta else None
-        for i in range(self.cf.CFArrayGetCount(arr) if arr else 0):
-            ch = self.cf.CFArrayGetValueAtIndex(arr, i)
-            name = self._pystr(self.io.IOReportChannelGetChannelName(ch))
-            if name == "GPU Energy":
-                unit = (self._pystr(
-                    self.io.IOReportChannelGetUnitLabel(ch)) or "").strip()
-                scale = self.SCALE.get(unit)
-                if scale:
-                    j = self.io.IOReportSimpleGetIntegerValue(ch, None)
-                    w = j * scale / (t - self._t_prev)
-                break
-        self.cf.CFRelease(self._prev)
-        if delta:
-            self.cf.CFRelease(delta)
-        self._prev, self._t_prev = cur, t
-        return w
-
-
-class _NVML:
-    """The NVIDIA meter on Linux: libnvidia-ml.so.1 is the library
-    nvidia-smi itself reads, resolvable wherever the driver is
-    installed (verified on driver 550.54.14, all eight core symbols).
-    utilization.gpu is the percent of the last internal sample period
-    (between 1/6 s and 1 s depending on the product, per the NVML
-    docs) during which any kernel ran, so 4 Hz polling repeats values;
-    medians are judged, so repeats change nothing. Symbols are guarded
-    like the IOReport private framework: anything missing quietly
-    drops its field and never touches the judgment."""
-
-    # thermal slowdown bits of the clocks throttle reasons mask
-    # (sw thermal 0x20, hw thermal 0x40); power caps are normal
-    # operation and do not count as throttling here
-    THERMAL = 0x20 | 0x40
-
-    class _Util(ctypes.Structure):
-        _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
-
-    class _Mem(ctypes.Structure):
-        _fields_ = [("total", ctypes.c_ulonglong),
-                    ("free", ctypes.c_ulonglong),
-                    ("used", ctypes.c_ulonglong)]
-
-    def __init__(self):
-        self.lib = ctypes.CDLL("libnvidia-ml.so.1")
-        if self.lib.nvmlInit_v2() != 0:
-            raise OSError("nvmlInit_v2 failed")
-        self.hdl = ctypes.c_void_p()
-        if self.lib.nvmlDeviceGetHandleByIndex_v2(
-                0, ctypes.byref(self.hdl)) != 0:
-            # index 0 only: multi gpu selection is a later milestone,
-            # and the README limits say so
-            raise OSError("no nvml device 0")
-
-    def sample(self):
-        """One sample in the sampler's own shape, or None."""
-        u = self._Util()
-        if not (hasattr(self.lib, "nvmlDeviceGetUtilizationRates")
-                and self.lib.nvmlDeviceGetUtilizationRates(
-                    self.hdl, ctypes.byref(u)) == 0):
-            return None
-        s = {"t": time.monotonic(), "dev": int(u.gpu), "mem": None}
-        m = self._Mem()
-        if hasattr(self.lib, "nvmlDeviceGetMemoryInfo") \
-                and self.lib.nvmlDeviceGetMemoryInfo(
-                    self.hdl, ctypes.byref(m)) == 0:
-            s["mem"] = int(m.used)
-        p = ctypes.c_uint()
-        if hasattr(self.lib, "nvmlDeviceGetPowerUsage") \
-                and self.lib.nvmlDeviceGetPowerUsage(
-                    self.hdl, ctypes.byref(p)) == 0:
-            s["gpu_w"] = p.value / 1000.0
-        return s
-
-    def device_name(self):
-        if not hasattr(self.lib, "nvmlDeviceGetName"):
-            return None
-        buf = ctypes.create_string_buffer(96)
-        if self.lib.nvmlDeviceGetName(self.hdl, buf, 96) != 0:
-            return None
-        name = buf.value.decode(errors="replace").strip()
-        # display form: the NVIDIA prefix drops so the gpu line and the
-        # footer hold the 66 column budget; the raw name is in the log
-        return re.sub(r"^NVIDIA\s+", "", name) or None
-
-    def throttled(self):
-        # newer drivers renamed the symbol; try both, judge the same bits
-        for sym in ("nvmlDeviceGetCurrentClocksThrottleReasons",
-                    "nvmlDeviceGetCurrentClocksEventReasons"):
-            if hasattr(self.lib, sym):
-                r = ctypes.c_ulonglong()
-                if getattr(self.lib, sym)(
-                        self.hdl, ctypes.byref(r)) == 0:
-                    return bool(r.value & self.THERMAL)
-        return False
-
-
-def thermal_raised():
-    """True when macOS itself says the machine is under thermal
-    pressure (pmset -g therm): a raised warning level or a CPU speed
-    limit under 100. Presentation only; it never votes on placement."""
-    out = _cmd_out(["pmset", "-g", "therm"])
-    m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
-    if m and int(m.group(1)) < 100:
-        return True
-    m = re.search(r"thermal warning level\s*=?\s*(\d+)", out, re.I)
-    return bool(m and int(m.group(1)) > 0)
-
-
 def telemetry_start(disabled=False):
     """A running sampler, or a dict naming why there is none. The os
     line prints that reason, so a run without OS evidence says so
-    instead of quietly reading like a fully instrumented one. macOS
-    samples through ioreg plus IOReport; Linux through NVML when an
-    NVIDIA driver is installed (amd/rocm is a separate milestone)."""
-    if disabled:
-        return {"off": "disabled"}
-    sysname = platform.system()
-    if sysname == "Linux":
-        try:
-            nv = _NVML()
-            first = nv.sample()
-        except Exception:
-            return {"off": "no nvml"}
-        if first is None:
-            return {"off": "nvml gave no gpu stats"}
-        return GpuSampler(first, backend=nv)
-    if sysname != "Darwin":
-        return {"off": "not macos"}
-    if not shutil.which("ioreg"):
-        return {"off": "no ioreg"}
-    first = read_gpu_stats()
+    instead of quietly reading like a fully instrumented one. Which
+    meter answers here is gpu_meters' problem, not this file's."""
+    meter = gpu_meters.open_meter(disabled)
+    if isinstance(meter, dict):
+        return meter
+    first = meter.sample()
     if first is None:
-        return {"off": "ioreg gave no gpu stats"}
-    return GpuSampler(first)
+        return {"off": "no {} data".format(meter.src)}
+    return GpuSampler(meter, first)
 
 
 class GpuSampler:
-    def __init__(self, first, backend=None):
+    def __init__(self, backend, first):
         self.samples = [first]
         self.marks = []
-        # backend None is the macOS pair (ioreg samples, IOReport
-        # watts); a backend object answers sample()/throttled() itself.
         # Only the sample source varies: the tick, the marks and the
-        # window math below are the same physics on every platform.
+        # window math below are the same physics on every platform, so
+        # this class never asks which meter it is holding.
         self._backend = backend
-        self._power = None
-        if backend is None:
-            try:
-                self._power = _IOReport()
-            except Exception:
-                self._power = None  # private API absent or moved: no watts
-        self._hot = backend.throttled() if backend else thermal_raised()
+        self._hot = backend.throttled()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
@@ -1236,14 +1086,8 @@ class GpuSampler:
         period = 1.0 / TELE_HZ
         while not self._stop.is_set():
             tick = time.monotonic()
-            s = self._backend.sample() if self._backend \
-                else read_gpu_stats()
+            s = self._backend.sample()
             if s:
-                if self._power:
-                    try:
-                        s["gpu_w"] = self._power.watts()
-                    except Exception:
-                        self._power = None
                 self.samples.append(s)
             self._stop.wait(max(0.05, period - (time.monotonic() - tick)))
 
@@ -1260,11 +1104,9 @@ class GpuSampler:
     def stop(self):
         self._stop.set()
         self._thread.join(timeout=2)
-        hot = self._backend.throttled() if self._backend \
-            else thermal_raised()
         return telemetry_summary(self.samples, self.marks,
-                                 self._hot or hot,
-                                 "nvml" if self._backend else "ioreg")
+                                 self._hot or self._backend.throttled(),
+                                 self._backend.src)
 
 
 def _med(vals):
@@ -1371,8 +1213,19 @@ def os_line(tele):
     if tele is None:
         return None
     if tele.get("off"):
-        return "gpu not sampled ({}); evidence: {}".format(
+        # the block's 66 columns are a feature: it gets pasted into
+        # forum comments and a wrapped line reads like a broken tool.
+        # "ioreg gave no gpu stats" was already two columns over before
+        # a second meter existed, so the clamp is mechanical now rather
+        # than a rule every new reason has to remember.
+        line = "gpu not sampled ({}); evidence: {}".format(
             tele["off"], tele.get("ev", "engine+timing"))
+        over = len(line) + 9 - WIDTH  # 9 = the "os" label gutter
+        if over > 0:
+            reason = tele["off"][:max(2, len(tele["off"]) - over - 2)] + ".."
+            line = "gpu not sampled ({}); evidence: {}".format(
+                reason, tele.get("ev", "engine+timing"))
+        return line
     if tele["idle_med"] is not None and tele["idle_med"] > 25:
         return "gpu {:.0f}% busy before the run, not idle; not judged" \
             .format(tele["idle_med"])
@@ -1660,7 +1513,8 @@ def diagnose(cold, rep, mode, tele=None):
         # misbuilt 4090 fixture measured prefill at 15.1x decode on 48
         # EPYC threads, so the laptop calibrated 5x line does not
         # transfer to many core machines.
-        if tele and tele.get("src") == "nvml" and not rep["gpu_kind"] \
+        if tele and tele.get("src") in ("nvml", "amdgpu") \
+                and not rep["gpu_kind"] \
                 and telemetry_read(tele) == "flat":
             mb = rep.get("model_bytes")
             stepped = mb and tele.get("mem_step") is not None \
@@ -1688,6 +1542,21 @@ def diagnose(cold, rep, mode, tele=None):
         return "PARTIAL OFFLOAD", (
             "{} layers sat on CPU; expect rates below a fully "
             "offloaded run.".format(total - n)
+        )
+    # both cross checks below read rates, so a run that produced none
+    # passes them by absence and hands the claim an unearned HEALTHY:
+    # issue #1 printed "the gpu did the work" over a table of n/a and a
+    # cold breakdown of three zeroes. The rule at the top of this
+    # docstring already says a missing source abstains; this is the
+    # source the whole lane table rests on, so it abstains loudest.
+    if cold.get("wall_s") and not any(
+            (cold["load_ms"], cold["prompt_ms"], cold["eval_ms"],
+             prefill, decode)):
+        return "NO TIMING EVIDENCE", (
+            "The engine says {}/{} layers on GPU and then printed no "
+            "timings picchio could read: every rate above is unmeasured, "
+            "not zero, and no verdict here rests on a number. Rerun with "
+            "--keep-logs and open an issue with the log.".format(n, total)
         )
     # a full offload claim from stderr, cross checked the same way the
     # ollama one is: first the OS meter, then the speed signature
@@ -1786,6 +1655,7 @@ def colorize(text, stream=None):
     BOLD, DIM, RESET = "\033[1m", "\033[2m", "\033[0m"
     GREEN, RED, YELLOW = "\033[32m", "\033[31m", "\033[33m"
     states = (("SILENT CPU FALLBACK", RED), ("CONFLICTING EVIDENCE", YELLOW),
+              ("NO TIMING EVIDENCE", YELLOW),
               ("PARTIAL OFFLOAD", YELLOW), ("NO PLACEMENT EVIDENCE", YELLOW),
               ("HEALTHY", GREEN), ("PASS", GREEN), ("FLAG", RED))
     out = []
@@ -2232,8 +2102,8 @@ def parse_block(text):
         m = re.match(r"VERDICT: (\S.*)", line)
         if m and b["verdict"] is None:
             for st in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
-                       "NO PLACEMENT EVIDENCE", "CONFLICTING EVIDENCE",
-                       "HEALTHY"):
+                       "NO PLACEMENT EVIDENCE", "NO TIMING EVIDENCE",
+                       "CONFLICTING EVIDENCE", "HEALTHY"):
                 if m.group(1).startswith(st):
                     b["verdict"] = st
                     break
@@ -2723,12 +2593,13 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
         sys.exit("picchio watch: no gpu meter here ({}). watch needs the "
                  "macos ioreg meter; on other platforms there is no engine "
                  "free placement signal yet.".format(sampler.get("off", "?")))
-    if sampler._backend is not None:
-        # the nvml meter feeds measure mode only for now; watch on
-        # linux is a separate milestone with its own calibration
+    if sampler._backend.src != "ioreg":
+        # the linux meters feed measure mode only for now; watch has its
+        # own calibration and is a separate milestone there
         sampler.stop()
-        sys.exit("picchio watch: watch is ioreg only for now; on linux "
-                 "the nvml meter runs inside measure mode.")
+        sys.exit("picchio watch: watch is ioreg only for now; the {} "
+                 "meter runs inside measure mode.".format(
+                     sampler._backend.src))
     # window: an explicit --for wins; otherwise watch until the pid exits
     # (capped), or a short fixed window for the whole-gpu snapshot
     if duration is None:
@@ -2752,7 +2623,7 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
         sys.stderr.write("\n")
     sampler.stop()
     summ = watch_summary(sampler.samples)
-    summ["throttled"] = sampler._hot or thermal_raised()
+    summ["throttled"] = sampler._hot or sampler._backend.throttled()
     state, para = watch_verdict(summ, ctx)
     code = 4 if state == "GPU IDLE" else 0
     payload = watch_json(target, summ, state, code, started, time.time(),
@@ -4082,7 +3953,7 @@ def selftest():
         cp_ok += 1
     # telemetry: synthetic timelines pushed through the real window
     # math and the real three source judge (no gpu needed, ci safe)
-    te_ok, te_all = 0, 5
+    te_ok, te_all = 0, 6
     gib = 1024 ** 3
 
     def synth_tele(idle_dev, work_dev, mem_base, mem_peak, src=None):
@@ -4135,6 +4006,16 @@ def selftest():
     st, para = diagnose(slow, slow, "llama.cpp")
     if st == "CONFLICTING EVIDENCE" and "CPU shaped" in para \
             and attribute_why(st, slow, "llama.cpp", []) is None:
+        te_ok += 1
+    # 6: whatever the reason for having no meter, the os line fits the
+    # block. This one shipped broken twice unnoticed, so it is checked
+    # rather than remembered: the reason text comes from whichever
+    # backend failed, and backends get added.
+    if all(len("os       " + os_line({"off": off, "ev": "engine+timing"}))
+           <= WIDTH
+           for off in ("no nvml", "no nvml/amdgpu", "disabled", "not macos",
+                       "no ioreg", "no ioreg data", "no amdgpu data",
+                       "a reason far longer than the block can ever hold")):
         te_ok += 1
     # verify: the two committed blocks pass, and blocks tampered by one
     # edit fail. Fixtures are built in memory from the real examples, so
@@ -4398,6 +4279,145 @@ def selftest():
             and "engine log does not say" in attribute_why(
                 st, se_cl, "llama.cpp", []):
         se_ok += 1
+    # locale: llama.cpp prints its numbers through the machine's locale,
+    # so on a comma decimal box every timing regex used to miss and the
+    # whole lane table came back n/a (issue #1). Same log, two decimal
+    # conventions, one parse.
+    lc_ok, lc_all = 0, 4
+    lc_dot = ("llama_model_loader: - model params     = 34.89 B\n"
+              "print_info: file size   = 28.53 GiB (6.56 BPW)\n"
+              "llama_perf_context_print:        load time =  5321.49 ms\n"
+              "llama_perf_context_print: prompt eval time =  1234.56 ms "
+              "/   730 tokens\n"
+              "llama_perf_context_print:        eval time = 98765.43 ms "
+              "/   128 runs\n"
+              "llm_load_tensors: offloaded 41/41 layers to GPU\n")
+    lc_de = lc_dot.replace(".", ",").replace("41/41", "41/41")
+    lc_a, lc_b = parse_stderr(lc_de, 133.6), parse_stderr(lc_dot, 133.6)
+    lc_keys = ("load_ms", "prompt_ms", "eval_ms", "prompt_tokens",
+               "eval_tokens", "model_params", "model_size", "model_bytes",
+               "offload_n", "prefill_toks", "decode_toks")
+    if all(lc_a[k] == lc_b[k] for k in lc_keys) and lc_a["load_ms"] == 5321.49:
+        lc_ok += 1
+    # the rightmost separator is the decimal point either way round
+    if (_num("28,53"), _num("28.53"), _num("1.234,56"), _num("1,234.56"),
+            _num("34"), _num("")) == (28.53, 28.53, 1234.56, 1234.56,
+                                      34.0, None):
+        lc_ok += 1
+    if size_bytes("28,53 GiB") == size_bytes("28.53 GiB") \
+            and size_bytes("28,53 GiB") and _dotted("28,53 GiB") \
+            == "28.53 GiB" and _dotted("28.53 GiB") == "28.53 GiB":
+        lc_ok += 1
+    # the source side: the engine runs with the decimal point pinned,
+    # and LC_ALL has to go because it outranks LC_NUMERIC
+    lc_env = dict(os.environ)
+    try:
+        os.environ["LC_ALL"] = "de_DE.UTF-8"
+        os.environ["LANG"] = "de_DE.UTF-8"
+        ev = engine_env()
+        if ev.get("LC_NUMERIC") == "C" and "LC_ALL" not in ev \
+                and ev.get("LANG") == "de_DE.UTF-8":
+            lc_ok += 1
+    finally:
+        os.environ.clear()
+        os.environ.update(lc_env)
+
+    # the timing gate: a full offload claim whose run produced no
+    # numbers at all is not HEALTHY. Both cross checks below it read
+    # rates, so with no rates they used to pass by absence.
+    tg_ok, tg_all = 0, 4
+    tg_none = dict(blank_pass(), offload_n=41, offload_total=41,
+                   wall_s=133.6)
+    st, para = diagnose(tg_none, tg_none, "llama.cpp")
+    if st == "NO TIMING EVIDENCE" and EXIT_CODES[st] == 7 \
+            and "unmeasured, not" in para:
+        tg_ok += 1
+    tg_real = dict(blank_pass(), offload_n=41, offload_total=41,
+                   wall_s=20.0, load_ms=1700.0, prompt_ms=1200.0,
+                   eval_ms=6000.0, prompt_tokens=730, eval_tokens=128)
+    finish_rates(tg_real)
+    if diagnose(tg_real, tg_real, "llama.cpp")[0] == "HEALTHY":
+        tg_ok += 1
+    # an engine that confessed still outranks the missing numbers: the
+    # gate only catches a claim nothing measured, never a confession
+    tg_cpu = dict(blank_pass(), offload_n=0, offload_total=33, wall_s=99.0)
+    tg_part = dict(blank_pass(), offload_n=10, offload_total=33, wall_s=99.0)
+    if diagnose(tg_cpu, tg_cpu, "llama.cpp")[0] == "SILENT CPU FALLBACK" \
+            and diagnose(tg_part, tg_part,
+                         "llama.cpp")[0] == "PARTIAL OFFLOAD":
+        tg_ok += 1
+    # a replay of an older run carries no wall clock, and an absent run
+    # is not a failed one
+    tg_old = dict(blank_pass(), offload_n=41, offload_total=41)
+    if diagnose(tg_old, tg_old, "llama.cpp")[0] == "HEALTHY":
+        tg_ok += 1
+
+    # the amd meter: sysfs only, no rocm-smi, and a three card box
+    # collapses to one reading per tick
+    am_ok, am_all = 0, 5
+
+    def am_tree(root, cards):
+        for name, fields in cards.items():
+            dev = os.path.join(root, name, "device")
+            os.makedirs(dev)
+            for rel, val in fields.items():
+                path = os.path.join(dev, rel)
+                if not os.path.isdir(os.path.dirname(path)):
+                    os.makedirs(os.path.dirname(path))
+                with open(path, "w") as fh:
+                    fh.write("{}\n".format(val))
+        return gpu_meters._AMDGPU(root=root)
+
+    pw = os.path.join("hwmon", "hwmon3", "power1_average")
+    with tempfile.TemporaryDirectory() as am_root:
+        am = am_tree(am_root, {
+            "card0": {"gpu_busy_percent": 97, "mem_info_vram_used": 9 * gib,
+                      pw: 310000000},
+            "card1": {"gpu_busy_percent": 12, "mem_info_vram_used": 9 * gib,
+                      pw: 95000000},
+            "card2": {"gpu_busy_percent": 41, "mem_info_vram_used": 9 * gib},
+            # a connector, not a gpu, and a card whose firmware is silent
+            "card0-DP-1": {"gpu_busy_percent": 99,
+                           "mem_info_vram_used": 999 * gib},
+            "card3": {"mem_info_vram_used": 9 * gib},
+        })
+        if len(am.cards) == 3:
+            am_ok += 1
+        s = am.sample()
+        # util is the max (two cards finishing early must not read idle),
+        # memory and watts are the sum (the weights and the draw split)
+        if s and s["dev"] == 97 and s["mem"] == 27 * gib \
+                and abs(s["gpu_w"] - 405.0) < 0.01:
+            am_ok += 1
+        # a field nothing answers is absent, never a zero
+        for c in ("card0", "card1", "card2"):
+            os.remove(os.path.join(am_root, c, "device",
+                                   "mem_info_vram_used"))
+        s = am.sample()
+        if s and s["mem"] is None and s["dev"] == 97 \
+                and am.device_name() is None and am.throttled() is False:
+            am_ok += 1
+        # one unreadable card drops out; the others still report
+        with open(os.path.join(am_root, "card0", "device",
+                               "gpu_busy_percent"), "w") as fh:
+            fh.write("n/a\n")
+        s = am.sample()
+        if s and s["dev"] == 41 and abs(s["gpu_w"] - 95.0) < 0.01:
+            am_ok += 1
+        # nothing readable is no sample, and the meter never opens on a
+        # tree with no amd card in it
+        for c in ("card1", "card2"):
+            with open(os.path.join(am_root, c, "device",
+                                   "gpu_busy_percent"), "w") as fh:
+                fh.write("n/a\n")
+        try:
+            gpu_meters._AMDGPU(root=os.path.join(am_root, "card3"))
+            opened = True
+        except OSError:
+            opened = False
+        if am.sample() is None and not opened:
+            am_ok += 1
+
     # real curve regression: the two 4090 telemetry captures replay
     # through the real window math; the misbuilt one must convict and
     # the healthy one must not
@@ -4744,11 +4764,13 @@ def selftest():
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
           "telemetry {}/{}, verify {}/{}, watch {}/{}, monitor {}/{}, "
           "sweep {}/{}, server {}/{}, linux {}/{}, silent-engine {}/{}, "
-          "curves {}/{}, plan {}/{}, id {}/{}, argv {}/{}, version {}/{}, "
+          "locale {}/{}, timing-gate {}/{}, amdgpu {}/{}, curves {}/{}, "
+          "plan {}/{}, id {}/{}, argv {}/{}, version {}/{}, "
           "onboarding {}/{}, queue/parity {}/{}".format(
               fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all, te_ok, te_all,
               ve_ok, ve_all, wa_ok, wa_all, mo_ok, mo_all, sw_ok, sw_all,
-              sv_ok, sv_all, lx_ok, lx_all, se_ok, se_all, rc_ok, rc_all,
+              sv_ok, sv_all, lx_ok, lx_all, se_ok, se_all,
+              lc_ok, lc_all, tg_ok, tg_all, am_ok, am_all, rc_ok, rc_all,
               pl_ok, pl_all, id_ok, id_all, av_ok, av_all, vp_ok, vp_all,
               gd_ok, gd_all, core_ok, core_all))
     if core_failures:
@@ -4757,7 +4779,9 @@ def selftest():
              and cp_ok == cp_all and te_ok == te_all
              and ve_ok == ve_all and wa_ok == wa_all and mo_ok == mo_all
              and sw_ok == sw_all and sv_ok == sv_all
-             and lx_ok == lx_all and se_ok == se_all and rc_ok == rc_all
+             and lx_ok == lx_all and se_ok == se_all
+             and lc_ok == lc_all and tg_ok == tg_all and am_ok == am_all
+             and rc_ok == rc_all
              and pl_ok == pl_all and id_ok == id_all and av_ok == av_all
              and vp_ok == vp_all and gd_ok == gd_all
              and core_ok == core_all else 1)
@@ -5160,10 +5184,7 @@ def main():
     block = render_verdict(mach, engine_str, model_name, passes, state,
                            para, mode, explain_part, cold_note, why,
                            block_ctx, args.extra, tele)
-    codes = {"HEALTHY": 0, "NO PLACEMENT EVIDENCE": 0,
-             "PARTIAL OFFLOAD": 3, "SILENT CPU FALLBACK": 4,
-             "CONFLICTING EVIDENCE": 5}
-    exit_code = codes.get(state, 0)
+    exit_code = EXIT_CODES.get(state, 0)
     if args.json:
         sys.stderr.write(colorize(block, sys.stderr) + "\n")
     else:

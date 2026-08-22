@@ -7,11 +7,11 @@
   <meta name="description" content="Qwen3.8-27B decoded at 81.5 tok/s with 66/66 layers on GPU and 5.7 tok/s with 28 layers on CPU. Run Picchio to see which one you have.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://logxio.github.io/picchio/">
-  <meta property="og:title" content="Qwen3.8-27B ran 14.3× slower with 28 layers on CPU">
+  <meta property="og:title" content="Picchio caught 28 Qwen3.8-27B layers on the CPU and a 14.3× slowdown">
   <meta property="og:description" content="Both runs completed. Picchio caught 66/66 GPU layers becoming 38/66.">
   <meta property="og:image" content="https://logxio.github.io/picchio/social-preview.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Qwen3.8-27B ran 14.3× slower with 28 layers on CPU">
+  <meta name="twitter:title" content="Picchio caught 28 Qwen3.8-27B layers on the CPU and a 14.3× slowdown">
   <meta name="twitter:description" content="Both runs completed. Picchio caught 66/66 GPU layers becoming 38/66.">
   <meta name="twitter:image" content="https://logxio.github.io/picchio/social-preview.png">
   <style>
@@ -68,6 +68,7 @@
     .actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 22px; }
     .actions a { color: var(--green); font-weight: 800; }
     .actions a:hover, .actions a:focus-visible { color: var(--green-hover); }
+    .command { width: fit-content; margin-top: 18px; padding: 14px 16px; background: #ffffff; font-family: var(--mono); font-size: 15px; font-weight: 700; }
     @media (max-width: 760px) {
       .shell { width: min(100% - 28px, 960px); }
       header { padding: 20px 0; }
@@ -86,7 +87,7 @@
       <a class="star" href="https://github.com/logxio/picchio">Star on GitHub ↗</a>
     </header>
     <main>
-      <h1>Qwen3.8-27B ran 14.3× slower when it spilled into the CPU.</h1>
+      <h1>Picchio caught 28 Qwen3.8-27B layers on the CPU and a 14.3× decode slowdown.</h1>
 
       <div class="proof" aria-label="Same Qwen3.8-27B file on two NVIDIA cards">
         <div><span class="label">RTX 5090 · 32 GB</span><span class="value"><span class="gpu">66/66 GPU</span> · 81.5 tok/s</span></div>
@@ -94,9 +95,10 @@
       </div>
 
       <div class="actions">
-        <a href="https://github.com/logxio/picchio/releases/tag/v1.0.0">Run it on your model ↗</a>
+        <a href="https://github.com/logxio/picchio/releases/download/v1.0.0/picchio.pyz">Download picchio.pyz ↓</a>
         <a href="https://github.com/logxio/picchio/blob/main/examples/windows-4070s-27b.txt">Read the 12 GB receipt ↗</a>
       </div>
+      <div class="command"><code>python picchio.pyz</code></div>
 
       <section id="submit-result">
         <div class="section-head">

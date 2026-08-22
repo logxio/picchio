@@ -4148,24 +4148,76 @@ def kv_account(meta, ctx=CTX):
 
 
 PLAN_COMPUTE = 512 * 1024 ** 2  # the graph buffer: sched_reserve
-# measured 505.02 MiB on the 9B and 493.00 MiB on the 35B here, so a
-# flat half GiB stands in for what the header cannot predict
+# measured 505.02 MiB on the 9B and 493.00 MiB on the 35B here, and
+# 509.02 MiB on the 27B under CUDA, so a flat half GiB stands in for
+# what the header cannot predict, on Metal and CUDA alike
+
+VRAM_SPARE = 1024 * 1024 ** 2
+# What the engine refuses to spend. llama.cpp fits the model to *free*
+# video memory and aims to leave this much of the card untouched; it
+# prints the whole sum when it cannot: "cannot meet free memory target
+# of 1024 MiB" then "target=9895 MiB" against 10919 MiB free, measured
+# on the 4070 SUPER. Total video memory is the number on the box; free
+# minus this spare is the number that decides.
 
 
 def plan_budget(mach):
-    """(budget bytes, label). On macOS the wall is the metal working
-    set, about 0.78 of ram: the engine itself reported 25558 MiB free
-    on the idle 32 GB test machine (the MiB-free figure in
-    examples/raw/healthy-metal). Elsewhere no fraction has been
-    calibrated yet, so whole ram is the bar and the label says the
-    check is ram only."""
+    """Where the model actually has to fit.
+
+    A dedicated card is its own pool, so the wall there is free video
+    memory less the spare the engine keeps, not the size printed on
+    the box: a 12282 MiB 4070 SUPER offered 10919 MiB free and the
+    engine aimed at 9895. Apple shares one pool, so the metal working
+    set stays the wall, about 0.78 of ram (the engine reported 25558
+    MiB free on the idle 32 GB machine). With no card and no meter the
+    check falls back to system ram and says so.
+
+    Returns a dict: bytes (the wall, or None), label, kind, and, for a
+    card, total/free/spare/name so the reader can see why the wall is
+    below the number on the box."""
     ram = (mach["ram_gb"] or 0) * 1024 ** 3
+    vram = None
+    try:
+        vram = gpu_meters.machine_gpu_vram()
+    except Exception:
+        vram = None
+    if vram:
+        total, free = vram
+        return {"bytes": max(0, free - VRAM_SPARE), "kind": "gpu",
+                "total": total, "free": free, "spare": VRAM_SPARE,
+                "name": mach.get("chip", ""),
+                "label": "free video memory less the engine's spare"}
     if not ram:
-        return None, "ram size unknown"
+        return {"bytes": None, "kind": None, "label": "ram size unknown"}
     if platform.system() == "Darwin":
-        return int(ram * 0.78), "metal working set, 0.78 of {} GB ram" \
-            .format(mach["ram_gb"])
-    return ram, "system ram only, gpu memory not judged"
+        return {"bytes": int(ram * 0.78), "kind": "unified",
+                "label": "metal working set, 0.78 of {} GB ram".format(
+                    mach["ram_gb"])}
+    return {"bytes": ram, "kind": "ram",
+            "label": "system ram only, gpu memory not judged"}
+
+
+def plan_layers(file_bytes, kv, meta, wall):
+    """(layers that fit on the card, layers in the model), or None when
+    the question does not apply.
+
+    Solves the arithmetic the engine solves: each offloaded layer costs
+    its share of the weights and its share of the kv cache, the graph
+    buffer is paid once whatever lands there, and the wall is the
+    budget. On the 4070 SUPER this lands on the engine's own 38 of 66
+    for the 27B. It moves by a layer as the desktop takes and returns
+    video memory, which is why it is printed as an estimate."""
+    blocks = _arch_get(meta, "block_count") if meta else None
+    if not blocks or not wall.get("bytes") or wall.get("kind") != "gpu":
+        return None
+    total = int(blocks) + 1  # the output layer offloads alongside them
+    per_layer = file_bytes / float(total) + (kv or 0) / float(total)
+    if per_layer <= 0:
+        return None
+    room = wall["bytes"] - PLAN_COMPUTE
+    if room <= 0:
+        return 0, total
+    return max(0, min(total, int(room // per_layer))), total
 
 
 def plan_state(need, budget):
@@ -4249,24 +4301,33 @@ def plan_target(arg):
     return arg, size, show.get("model_info") or {}, None
 
 
-def plan_row(name, file_bytes, meta, note, budget, bw):
+def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX):
     """One accounted row: need, state, estimate; honest holes where
-    the evidence is missing."""
+    the evidence is missing.
+
+    On a machine with a card the state is not a yes or no. A model
+    larger than the card still runs, with the layers that did not fit
+    on the cpu, so the answer there is how many of them land where."""
     if file_bytes is None:
         return {"name": name, "need": None, "state": "not judged",
-                "est": None, "moe": False,
+                "est": None, "moe": False, "layers": None,
                 "note": note or "no size available"}
-    kv, kv_note = kv_account(meta) if meta else (None, note or "?")
+    kv, kv_note = kv_account(meta, ctx) if meta else (None, note or "?")
     need = file_bytes + (kv or 0) + PLAN_COMPUTE
     moe = plan_is_moe(meta) if meta else False
+    budget = wall.get("bytes")
+    layers = plan_layers(file_bytes, kv, meta, wall)
     state = plan_state(need, budget) if budget else "not judged"
+    if budget and wall.get("kind") == "gpu" and state != "fits":
+        state = "partial" if layers and layers[0] else "cpu"
     return {"name": name, "need": need, "state": state, "moe": moe,
             "est": plan_est_decode(bw, file_bytes, moe),
             "kv": kv, "kv_note": kv_note, "file": file_bytes,
+            "layers": layers,
             "note": None if meta else (note or "header unreadable")}
 
 
-def render_plan_one(row, budget, blabel, bw, speed_note):
+def render_plan_one(row, wall, bw, speed_note):
     out = ["picchio plan: " + row["name"]]
     if row["need"] is None:
         out.append("  " + row["note"])
@@ -4282,12 +4343,28 @@ def render_plan_one(row, budget, blabel, bw, speed_note):
     out.append("  compute   {:>10}   graph buffer, measured constant"
                .format(_gib(PLAN_COMPUTE)))
     out.append("  need      {:>10}".format(_gib(row["need"])))
-    if budget:
-        out.append("  budget    {:>10}   {}".format(_gib(budget), blabel))
+    budget = wall.get("bytes")
+    if budget and wall.get("kind") == "gpu":
+        out.append("  gpu total {:>10}   {}".format(
+            _gib(wall["total"]), wall.get("name") or "this card"))
+        out.append("  gpu free  {:>10}   right now; the desktop and the "
+                   "driver hold {}".format(
+                       _gib(wall["free"]),
+                       _gib(wall["total"] - wall["free"])))
+        out.append("  budget    {:>10}   the engine leaves {} of the card "
+                   "spare".format(_gib(budget), _gib(wall["spare"])))
+    elif budget:
+        out.append("  budget    {:>10}   {}".format(_gib(budget),
+                                                    wall["label"]))
+    if not budget:
+        out.append("  verdict   not judged   " + wall["label"])
+    elif row["layers"] and row["state"] != "fits":
+        fit, total = row["layers"]
+        out.append("  verdict   {:>10}   about {} of {} layers on the gpu, "
+                   "the rest on the cpu".format(row["state"], fit, total))
+    else:
         out.append("  verdict   {:>10}   {:.0f}% of budget".format(
             row["state"], 100.0 * row["need"] / budget))
-    else:
-        out.append("  verdict   not judged   " + blabel)
     if row["note"]:
         out.append("  note: " + row["note"])
     if row["moe"]:
@@ -4306,24 +4383,33 @@ def render_plan_one(row, budget, blabel, bw, speed_note):
     return "\n".join(out)
 
 
-def render_plan_scan(rows, budget, blabel, bw, speed_note):
+def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX):
     out = ["picchio plan: {} model{} on this machine".format(
         len(rows), "" if len(rows) == 1 else "s")]
-    if budget:
-        out.append("budget {} ({})".format(_gib(budget), blabel))
-        out.append("kv counted at ctx {}".format(CTX))
+    budget = wall.get("bytes")
+    if budget and wall.get("kind") == "gpu":
+        out.append("budget {} ({} free of {} on {}, less {} the engine "
+                   "keeps spare)".format(
+                       _gib(budget), _gib(wall["free"]), _gib(wall["total"]),
+                       wall.get("name") or "this card", _gib(wall["spare"])))
+    elif budget:
+        out.append("budget {} ({})".format(_gib(budget), wall["label"]))
     else:
-        out.append("budget not judged: " + blabel)
+        out.append("budget not judged: " + wall["label"])
+    out.append("kv counted at ctx {}".format(ctx))
     out.append("")
     calibrated = bw is not None
-    head = "  {:<30}{:>9}   {:<5}".format("model", "need", "fit")
+    head = "  {:<30}{:>9}   {:<7}".format("model", "need", "fit")
     if calibrated:
         head += "  est decode"
     out.append(head.rstrip())
     for r in rows:
         name = r["name"] if len(r["name"]) <= 30 else r["name"][:28] + ".."
-        line = "  {:<30}{:>9}   {:<5}".format(
-            name, _gib(r["need"]) if r["need"] else "?", r["state"])
+        fit = r["state"]
+        if r.get("layers") and fit not in ("fits", "not judged"):
+            fit = "{}/{}".format(r["layers"][0], r["layers"][1])
+        line = "  {:<30}{:>9}   {:<7}".format(
+            name, _gib(r["need"]) if r["need"] else "?", fit)
         if calibrated:
             if r["est"] is not None:
                 line += "  ~{:.1f} tok/s".format(r["est"])
@@ -4346,24 +4432,34 @@ def render_plan_scan(rows, budget, blabel, bw, speed_note):
 
 def plan_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio plan [MODEL]\n"
-              "the capacity account before you download or load: will it\n"
-              "fit (gguf header geometry against this machine's memory\n"
-              "budget), and, once one real diagnosis has been run here,\n"
-              "an estimated decode rate. With no MODEL, accounts every\n"
-              "model found on this machine. Estimates are labeled and\n"
-              "never appear in a verdict block.")
+        print("usage: picchio plan [MODEL] [--ctx N]\n"
+              "the capacity account before you download or load: how much\n"
+              "of it lands on the gpu (gguf header geometry against this\n"
+              "machine's free video memory), and, once one real diagnosis\n"
+              "has been run here, an estimated decode rate. --ctx sets the\n"
+              "context the kv cache is counted at; a long context is often\n"
+              "what pushes a model off the card. With no MODEL, accounts\n"
+              "every model found on this machine. Estimates are labeled\n"
+              "and never appear in a verdict block.")
         sys.exit(0)
+    ctx = CTX
+    argv = list(argv)
+    if "--ctx" in argv:
+        i = argv.index("--ctx")
+        if i + 1 >= len(argv) or not argv[i + 1].isdigit() \
+                or int(argv[i + 1]) < 1:
+            sys.exit("picchio plan: --ctx needs a positive number of tokens")
+        ctx = int(argv[i + 1])
+        del argv[i:i + 2]
     if len(argv) > 1:
-        sys.exit("picchio plan: usage: picchio plan [MODEL]")
+        sys.exit("picchio plan: usage: picchio plan [MODEL] [--ctx N]")
     mach = machine_info()
-    budget, blabel = plan_budget(mach)
+    wall = plan_budget(mach)
     bw, speed_note = plan_speed_source(load_cache())
     if argv:
         name, fb, meta, note = plan_target(argv[0])
-        row = plan_row(name, fb, meta, note, budget, bw)
-        print(colorize(render_plan_one(row, budget, blabel, bw,
-                                       speed_note)))
+        row = plan_row(name, fb, meta, note, wall, bw, ctx)
+        print(colorize(render_plan_one(row, wall, bw, speed_note)))
         sys.exit(0)
     sizes = {}
     if ollama_reachable():
@@ -4377,11 +4473,11 @@ def plan_cli(argv):
     for label, note, arg, _size in scan_models()[0]:
         if note == "gguf":
             n, fb, meta, why = plan_target(arg)
-            rows.append(plan_row(n, fb, meta, why, budget, bw))
+            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx))
         elif note == "ollama":
             n, fb, meta, why = plan_target(arg)
             fb = fb or sizes.get(arg)
-            rows.append(plan_row(n, fb, meta, why, budget, bw))
+            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx))
         else:
             rows.append({"name": label, "need": None, "est": None,
                          "moe": False, "state": "not judged",
@@ -4389,7 +4485,7 @@ def plan_cli(argv):
     if not rows:
         sys.exit("picchio plan: no models found on this machine; give "
                  "it a .gguf path or an ollama tag.")
-    print(colorize(render_plan_scan(rows, budget, blabel, bw, speed_note)))
+    print(colorize(render_plan_scan(rows, wall, bw, speed_note, ctx)))
     sys.exit(0)
 
 
@@ -5841,7 +5937,7 @@ def selftest():
     # and the kv formula must land on the engine's own committed
     # allocation figures; the speed gate refuses everything but a
     # cached dense measurement
-    pl_ok, pl_all = 0, 6
+    pl_ok, pl_all = 0, 7
 
     def synth_gguf(arch, kvs):
         out = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", 0),
@@ -5905,6 +6001,23 @@ def selftest():
     if bw == 100 * gib and plan_est_decode(bw, 10 * gib, False) == 10.0 \
             and plan_est_decode(bw, 10 * gib, True) is None \
             and mbw is None and "mixture of experts" in mnote:
+        pl_ok += 1
+    # 7: the layer split is pinned to what the engine itself decided on
+    #    a real card. On the 4070 SUPER, llama.cpp saw 10919 MiB free,
+    #    printed "cannot meet free memory target of 1024 MiB" and then
+    #    "target=9895 MiB", and put 38 of the 27B's 66 layers on the
+    #    gpu. The same wall and the same header geometry have to land
+    #    on 38 here, and a model that fits has to answer every layer.
+    mib = 1024 ** 2
+    card = {"bytes": (10919 - 1024) * mib, "kind": "gpu",
+            "total": 12282 * mib, "free": 10919 * mib,
+            "spare": VRAM_SPARE, "name": "RTX 4070 SUPER"}
+    big = {"general.architecture": "q", "q.block_count": 65}
+    small = {"general.architecture": "q", "q.block_count": 32}
+    if plan_layers(16464440224, 205 * mib, big, card) == (38, 66) \
+            and plan_layers(5680522464, 128 * mib, small, card) == (33, 33) \
+            and plan_layers(16464440224, 205 * mib, big,
+                            {"bytes": 64 * gib, "kind": "ram"}) is None:
         pl_ok += 1
     # id: a synthetic gguf with a real tensor table replays through the
     # same walk, account and expert arithmetic used live (the big real

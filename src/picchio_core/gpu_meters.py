@@ -205,6 +205,9 @@ class _IOAccel:
         m = re.search(r"thermal warning level\s*=?\s*(\d+)", out, re.I)
         return bool(m and int(m.group(1)) > 0)
 
+    def vram(self):
+        return None  # unified memory: no separate pool to fit into
+
     def device_name(self):
         return None  # the chip string already names an Apple GPU
 
@@ -290,6 +293,22 @@ class _NVML:
 
     def sample(self):
         return _collapse([self._one(h) for h in self.hdls])
+
+    def vram(self):
+        """(total, free) bytes over every card, or None. Summed the way
+        a split model is loaded: llama.cpp spreads layers across the
+        cards it is given."""
+        total = free = 0
+        seen = False
+        for hdl in self.hdls:
+            m = self._Mem()
+            if hasattr(self.lib, "nvmlDeviceGetMemoryInfo") \
+                    and self.lib.nvmlDeviceGetMemoryInfo(
+                        hdl, ctypes.byref(m)) == 0:
+                total += int(m.total)
+                free += int(m.free)
+                seen = True
+        return (total, free) if seen else None
 
     def _name(self, hdl):
         if not hasattr(self.lib, "nvmlDeviceGetName"):
@@ -381,6 +400,18 @@ class _AMDGPU:
     def sample(self):
         return _collapse([self._one(d) for d in self.cards])
 
+    def vram(self):
+        total = free = 0
+        seen = False
+        for dev in self.cards:
+            whole = _read_int(os.path.join(dev, "mem_info_vram_total"))
+            used = _read_int(os.path.join(dev, "mem_info_vram_used"))
+            if whole is not None and used is not None:
+                total += whole
+                free += max(0, whole - used)
+                seen = True
+        return (total, free) if seen else None
+
     def device_name(self):
         names = []
         for dev in self.cards:
@@ -447,6 +478,23 @@ def open_meter(disabled=False):
     if meter.sample() is None:
         return {"off": "no ioreg data"}
     return meter
+
+
+def machine_gpu_vram():
+    """(total, free) bytes of dedicated video memory, or None when the
+    gpu shares system ram or no meter answers. Free is the number a
+    fit question turns on: the desktop and the driver are already
+    holding part of the card before any model loads."""
+    if platform.system() not in ("Linux", "Windows"):
+        return None
+    for backend in (_NVML, _AMDGPU):
+        try:
+            got = backend().vram()
+        except Exception:
+            continue
+        if got and got[0]:
+            return got
+    return None
 
 
 def machine_gpu_name():

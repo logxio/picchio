@@ -44,5 +44,5 @@
   <text x="676" y="350" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="46" font-weight="700">38/66 GPU</text>
   <text x="676" y="414" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="42" font-weight="700">5.7 tok/s</text>
   <text x="676" y="468" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="25">28 layers on CPU</text>
-  <text x="70" y="574" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">Same Q4_K_M GGUF · ctx 4096 · decode</text>
+  <text x="70" y="574" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">Same Q4_K_M GGUF · llama.cpp · ctx 4096 · decode</text>
 </svg>

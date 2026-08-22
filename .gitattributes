@@ -1,0 +1,5 @@
+# The zipapp is built from LF sources and the selftest byte-compares the
+# two, so a CRLF checkout would fail an honest tree. Keep text at LF.
+* text=auto eol=lf
+*.pyz binary
+*.png binary

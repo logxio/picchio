@@ -7,6 +7,7 @@ import re
 import time
 
 from . import CHECKPOINT_SCHEMA
+from .host import pid_alive as _pid_alive
 
 
 class ArtifactError(Exception):
@@ -87,14 +88,6 @@ def safe_component(value):
     clean = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-.")[:48]
     suffix = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
     return "{}-{}".format(clean or "case", suffix)
-
-
-def _pid_alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except (OSError, ValueError, TypeError):
-        return False
 
 
 class ArtifactStore:

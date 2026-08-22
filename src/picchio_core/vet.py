@@ -234,7 +234,7 @@ def vet_cli(argv, width):
         sys.exit("picchio vet: usage: picchio vet [FILE]")
     try:
         text = sys.stdin.read() if not argv or argv[0] == "-" \
-            else open(argv[0]).read()
+            else open(argv[0], encoding="utf-8", errors="replace").read()
     except OSError as e:
         sys.exit("picchio vet: {}".format(e))
     if not text.strip():

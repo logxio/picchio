@@ -39,6 +39,13 @@ chmod +x picchio
 ./picchio
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio.pyz
+python picchio.pyz
+```
+
 With no arguments, Picchio finds Ollama tags, local GGUF files and models in
 the Hugging Face and LM Studio caches. Pick one and it runs three passes.
 
@@ -50,8 +57,8 @@ You can also point it straight at a model or a running server:
 ./picchio http://127.0.0.1:8080
 ```
 
-It runs on macOS and Linux with Python 3.9+. The download is one file and
-uses only the standard library.
+It runs on macOS, Linux and Windows with Python 3.9+. The download is one
+file and uses only the standard library.
 
 ## Use the result
 

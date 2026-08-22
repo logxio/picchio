@@ -35,6 +35,8 @@ if os.path.isdir(_SOURCE_ROOT) and _SOURCE_ROOT not in sys.path:
     sys.path.insert(0, _SOURCE_ROOT)
 
 from picchio_core import gpu_meters  # noqa: E402  (needs the path above)
+from picchio_core.host import (  # noqa: E402
+    pid_alive, process_identity, process_list, windows_machine)
 # share's output shapes and the whole of vet live in the module layer:
 # both are new capability, and this entry point is already long enough
 # that new capability landing in it is a rule, not a preference. What
@@ -124,7 +126,8 @@ def prompt_nonce(run_id, i):
 
 def _cmd_out(args):
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        r = subprocess.run(args, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=10)
         return (r.stdout + r.stderr).strip()
     except Exception:
         return ""
@@ -141,12 +144,12 @@ def machine_info():
         info["os"] = "macOS " + platform.mac_ver()[0]
     elif sysname == "Linux":
         try:
-            with open("/proc/cpuinfo") as f:
+            with open("/proc/cpuinfo", encoding="utf-8") as f:
                 for line in f:
                     if line.lower().startswith("model name"):
                         info["chip"] = line.split(":", 1)[1].strip()
                         break
-            with open("/proc/meminfo") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("MemTotal"):
                         kb = int(line.split()[1])
@@ -155,18 +158,25 @@ def machine_info():
         except OSError:
             pass
         info["os"] = "Linux " + platform.release()
-        try:
-            # the gpu belongs in the machine fingerprint on linux; the
-            # nvml name (display form) rides the chip field so every
-            # footer and cache entry carries it without a new column
-            gpu = gpu_meters.machine_gpu_name()
-            if gpu:
-                info["chip"] = "{} + {}".format(info["chip"], gpu) \
-                    if info["chip"] else gpu
-        except Exception:
-            pass
+    elif sysname == "Windows":
+        chip, ram, label = windows_machine()
+        info["chip"] = chip
+        if ram:
+            info["ram_gb"] = round(ram / (1024 ** 3))
+        info["os"] = label
     else:
         info["os"] = sysname
+    try:
+        # the gpu belongs in the machine fingerprint on linux and windows
+        # (macOS answers None: the chip string already names it); the
+        # nvml name (display form) rides the chip field so every footer
+        # and cache entry carries it without a new column
+        gpu = gpu_meters.machine_gpu_name()
+        if gpu:
+            info["chip"] = "{} + {}".format(info["chip"], gpu) \
+                if info["chip"] else gpu
+    except Exception:
+        pass
     if not info["chip"]:
         info["chip"] = platform.machine() or "unknown cpu"
     return info
@@ -259,7 +269,7 @@ def keep_log(path, text):
         return
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
     except OSError as e:
         sys.stderr.write("picchio: could not write {}: {}\n".format(path, e))
@@ -284,6 +294,12 @@ def find_binary(explicit):
         path = shutil.which(name)
         if path:
             return path
+    if os.name == "nt":
+        sys.exit(
+            "picchio: could not find llama-completion.exe or llama-cli.exe "
+            "on PATH.\nUnzip a llama.cpp Windows build (for NVIDIA, the "
+            "cuda zip plus its cudart zip into one folder) and pass "
+            "--bin C:\\path\\to\\llama-completion.exe.")
     sys.exit(
         "picchio: could not find llama-completion or llama-cli on PATH.\n"
         "Install llama.cpp (e.g. brew install llama.cpp) or pass --bin."
@@ -326,7 +342,8 @@ def _run_capped(args, timeout, cap, env=None):
     a full OS buffer. env replaces the child's environment when given."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, errors="replace", env=env)
+                            text=True, encoding="utf-8", errors="replace",
+                            env=env)
     buf = {"out": [], "err": [], "n": 0, "capped": False}
     lock = threading.Lock()
 
@@ -641,7 +658,9 @@ def ollama_host_is_local():
 def ollama_log_paths():
     """Readable Ollama server logs, including stdout/stderr redirects.
 
-    The packaged app normally writes under ~/.ollama/logs. A terminal or
+    The packaged app normally writes under ~/.ollama/logs (also
+    ~/Library/Logs/Ollama on macOS, %LOCALAPPDATA%\\Ollama on Windows). A
+    terminal or
     service manager may redirect `ollama serve` anywhere, so on local hosts
     its live fd 1/2 targets are the stronger discovery path. Failure to find
     either is an evidence gap, never permission to assume the configured
@@ -650,16 +669,20 @@ def ollama_log_paths():
     if not ollama_host_is_local():
         return []
     paths = []
-    for pat in (os.path.expanduser("~/.ollama/logs/*.log"),
-                os.path.expanduser("~/Library/Logs/Ollama/*.log")):
+    patterns = [os.path.expanduser("~/.ollama/logs/*.log"),
+                os.path.expanduser("~/Library/Logs/Ollama/*.log")]
+    if os.environ.get("LOCALAPPDATA"):
+        patterns.append(os.path.join(os.environ["LOCALAPPDATA"], "Ollama",
+                                     "*.log"))
+    for pat in patterns:
         paths.extend(glob.glob(pat))
-    ps = _cmd_out(["ps", "-axo", "pid=,command="])
     pids = []
-    for line in ps.splitlines():
-        fields = line.strip().split(None, 1)
-        if len(fields) == 2 and re.search(
-                r"(?:^|/)ollama\s+serve(?:\s|$)", fields[1]):
-            pids.append(fields[0])
+    if os.name != "nt":
+        # the windows app logs at a fixed place; the fd walk below is
+        # the posix answer to a redirected `ollama serve`
+        for pid, command in process_list():
+            if re.search(r"(?:^|/)ollama\s+serve(?:\s|$)", command):
+                pids.append(str(pid))
     if sys.platform.startswith("linux"):
         for pid in pids:
             for fd in ("1", "2"):
@@ -792,6 +815,9 @@ def invocation():
     has a shebang and must not name a picchio.py file that was never
     downloaded."""
     raw = sys.argv[0] or "picchio"
+    if os.name == "nt":
+        # no shebang on windows: the interpreter is always spelled out
+        return "python " + subprocess.list2cmdline([raw])
     if raw.endswith(".py"):
         return "python3 " + shlex.quote(raw)
     return shlex.quote(raw)
@@ -2264,11 +2290,11 @@ def guard(cmd, keep_dir=None):
         " ".join(shlex.quote(a) for a in cmd)))
     try:
         child = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True,
-                                 errors="replace")
+                                 encoding="utf-8", errors="replace")
     except OSError as e:
         sys.exit("picchio guard: could not start {}: {}".format(cmd[0], e))
     t0 = time.monotonic()
-    log = open(os.path.join(keep_dir, "guard.stderr.txt"), "w") \
+    log = open(os.path.join(keep_dir, "guard.stderr.txt"), "w", encoding="utf-8") \
         if keep_dir else None
     # pinned keeps the load time placement evidence forever; tail keeps
     # the recent perf lines. A guarded server can log for hours, so the
@@ -2644,7 +2670,7 @@ def compare_cli(argv):
     blocks = []
     for path in argv:
         try:
-            with open(path, errors="replace") as f:
+            with open(path, errors="replace", encoding="utf-8") as f:
                 blk = parse_block(f.read())
         except OSError as e:
             sys.exit("picchio compare: {}".format(e))
@@ -2790,7 +2816,7 @@ def verify_cli(argv):
     src = argv[0] if argv and argv[0] != "-" else None
     if src:
         try:
-            text = open(src, errors="replace").read()
+            text = open(src, errors="replace", encoding="utf-8").read()
         except OSError as e:
             sys.exit("picchio verify: {}".format(e))
     else:
@@ -2820,20 +2846,10 @@ def verify_cli(argv):
 # says so, exactly the abstain discipline the measure-mode vote already
 # uses on a busy desktop.
 
-def pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, just owned by another user
-    # Signal 0 also succeeds for a dead child waiting to be reaped. Treat
-    # that zombie as exited or watch PID can wait an hour after work ended.
-    state = _cmd_out(["ps", "-p", str(pid), "-o", "stat="]).strip()
-    return not state.startswith("Z") if state else True
-
-
 def proc_name(pid):
+    if os.name == "nt":
+        identity = process_identity(pid) or {}
+        return os.path.basename(identity.get("executablePath") or "?")
     out = _cmd_out(["ps", "-p", str(pid), "-o", "comm="]).splitlines()
     return os.path.basename(out[0]) if out and out[0] else "?"
 
@@ -3267,7 +3283,7 @@ def ollama_model_path(tag):
         name = "library/" + name
     path = os.path.join(base, "manifests", reg, name, ver)
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             layers = json.load(f).get("layers") or []
     except (OSError, ValueError):
         return None
@@ -3292,12 +3308,7 @@ def engine_pid_for(model_path):
     with --no-mmap, so it cannot be the primary."""
     if not model_path:
         return None
-    hits = []
-    for line in _cmd_out(["ps", "-axo", "pid=,command="]).splitlines():
-        fields = line.strip().split(None, 1)
-        if len(fields) == 2 and model_path in fields[1] \
-                and fields[0].isdigit():
-            hits.append(int(fields[0]))
+    hits = [pid for pid, command in process_list() if model_path in command]
     if not hits and shutil.which("lsof"):
         for tok in _cmd_out(["lsof", "-t", model_path]).split():
             if tok.isdigit():
@@ -4971,7 +4982,7 @@ def share_cli(argv):
         i += 1
     try:
         text = sys.stdin.read() if path in (None, "-") \
-            else open(path).read()
+            else open(path, encoding="utf-8").read()
     except OSError as e:
         sys.exit("picchio share: {}".format(e))
     b = parse_block(text)
@@ -5057,17 +5068,17 @@ def selftest():
             meta_p = os.path.join(d, "pass{}.meta.json".format(i))
             if not os.path.exists(meta_p):
                 break
-            meta = json.load(open(meta_p))
+            meta = json.load(open(meta_p, encoding="utf-8"))
             metas.append(meta)
             fx_all += 1
             if os.path.exists(stderr_p):
-                p = parse_stderr(open(stderr_p).read(), meta["wall_s"])
+                p = parse_stderr(open(stderr_p, encoding="utf-8").read(), meta["wall_s"])
                 mode = "llama.cpp"
             elif os.path.exists(resp_p) and meta.get("mode") == "server":
-                p = map_server(json.load(open(resp_p)), meta["wall_s"])
+                p = map_server(json.load(open(resp_p, encoding="utf-8")), meta["wall_s"])
                 mode = "server"
             elif os.path.exists(resp_p):
-                p = map_ollama(json.load(open(resp_p)), meta["wall_s"],
+                p = map_ollama(json.load(open(resp_p, encoding="utf-8")), meta["wall_s"],
                                meta.get("ps"))
                 mode = "ollama"
             else:
@@ -5081,14 +5092,14 @@ def selftest():
             continue
         rp_all += 1
         txt_p = os.path.join(here, "examples", name + ".txt")
-        want = open(txt_p).read().rstrip().splitlines()
+        want = open(txt_p, encoding="utf-8").read().rstrip().splitlines()
         l1, l2 = passes[0]["load_ms"], passes[1]["load_ms"]
         cold_note = (l1 is not None and l2 is not None
                      and l1 < 2 * l2 + 500)
         tele = None  # raw dirs that predate the sampler have no curve
         tj = os.path.join(d, "telemetry.json")
         if os.path.exists(tj):
-            raw = json.load(open(tj))
+            raw = json.load(open(tj, encoding="utf-8"))
             tele = raw.get("summary")
             if raw.get("samples") and raw.get("marks"):
                 # the committed curve is the evidence and the summary
@@ -5123,8 +5134,8 @@ def selftest():
                     break
     # compare: the two committed llama.cpp blocks are a natural pair
     cp_ok, cp_all = 0, 4
-    ha = open(os.path.join(here, "examples", "healthy-metal.txt")).read()
-    fb = open(os.path.join(here, "examples", "cpu-fallback.txt")).read()
+    ha = open(os.path.join(here, "examples", "healthy-metal.txt"), encoding="utf-8").read()
+    fb = open(os.path.join(here, "examples", "cpu-fallback.txt"), encoding="utf-8").read()
     pa = parse_block("someone posted this:\n" + ha + "\nhope it helps")
     pb = parse_block(fb)
     if pa and pb and pa["ctx"] == CTX \
@@ -5268,7 +5279,7 @@ def selftest():
     # The committed cached-ollama block is the exhibit; prefill parks as
     # None, the other two lanes survive, and verify judges on those.
     ab = open(os.path.join(here, "examples",
-                           "linux-5090-ollama.txt")).read()
+                           "linux-5090-ollama.txt"), encoding="utf-8").read()
     pab = parse_block(ab)
     if pab and pab["row"] == "warm mid" and pab["rates"][0] is None \
             and pab["rates"][1] and pab["rates"][2] \
@@ -5435,17 +5446,17 @@ def selftest():
     swtxt = os.path.join(here, "examples", "ctx-sweep.txt")
     if os.path.exists(os.path.join(swroot, "sweep.meta.json")) \
             and os.path.exists(swtxt):
-        sm = json.load(open(os.path.join(swroot, "sweep.meta.json")))
+        sm = json.load(open(os.path.join(swroot, "sweep.meta.json"), encoding="utf-8"))
         rows = []
         for ctx in sm["tiers"]:
             ps = []
             for i in range(1, sm["passes"] + 1):
                 base = os.path.join(swroot, "ctx{}.pass{}".format(ctx, i))
-                w = json.load(open(base + ".meta.json"))["wall_s"]
+                w = json.load(open(base + ".meta.json", encoding="utf-8"))["wall_s"]
                 if os.path.exists(base + ".stderr.txt"):
-                    ps.append(parse_stderr(open(base + ".stderr.txt").read(), w))
+                    ps.append(parse_stderr(open(base + ".stderr.txt", encoding="utf-8").read(), w))
                 elif os.path.exists(base + ".response.json"):
-                    ps.append(map_ollama(json.load(open(base + ".response.json")),
+                    ps.append(map_ollama(json.load(open(base + ".response.json", encoding="utf-8")),
                                          w, None))
             if ps:
                 rp = build_rep(ps)
@@ -5454,7 +5465,7 @@ def selftest():
                                 rp["wallclock_toks"]))
         got = render_sweep(machine_info(), sm["engine"],
                            sm["model_name"], rows).splitlines()
-        want = open(swtxt).read().rstrip().splitlines()
+        want = open(swtxt, encoding="utf-8").read().rstrip().splitlines()
         if got[:-1] == want[:-1]:  # footer names the replaying machine
             sw_ok += 1
     else:
@@ -5496,7 +5507,7 @@ def selftest():
 
     def lparse(fname):
         p = os.path.join(lxroot, fname)
-        return parse_stderr(open(p).read(), None) if os.path.exists(p) \
+        return parse_stderr(open(p, encoding="utf-8").read(), None) if os.path.exists(p) \
             else None
 
     lx_h = lparse("cuda-healthy.stderr.txt")
@@ -5725,7 +5736,7 @@ def selftest():
                 path = os.path.join(dev, rel)
                 if not os.path.isdir(os.path.dirname(path)):
                     os.makedirs(os.path.dirname(path))
-                with open(path, "w") as fh:
+                with open(path, "w", encoding="utf-8") as fh:
                     fh.write("{}\n".format(val))
         return gpu_meters._AMDGPU(root=root)
 
@@ -5760,7 +5771,7 @@ def selftest():
             am_ok += 1
         # one unreadable card drops out; the others still report
         with open(os.path.join(am_root, "card0", "device",
-                               "gpu_busy_percent"), "w") as fh:
+                               "gpu_busy_percent"), "w", encoding="utf-8") as fh:
             fh.write("n/a\n")
         s = am.sample()
         if s and s["dev"] == 41 and abs(s["gpu_w"] - 95.0) < 0.01:
@@ -5769,7 +5780,7 @@ def selftest():
         # tree with no amd card in it
         for c in ("card1", "card2"):
             with open(os.path.join(am_root, c, "device",
-                                   "gpu_busy_percent"), "w") as fh:
+                                   "gpu_busy_percent"), "w", encoding="utf-8") as fh:
                 fh.write("n/a\n")
         try:
             gpu_meters._AMDGPU(root=os.path.join(am_root, "card3"))
@@ -5789,7 +5800,7 @@ def selftest():
         path = os.path.join(lxroot, name + ".telemetry.jsonl")
         if not os.path.exists(path):
             return rows
-        for line in open(path):
+        for line in open(path, encoding="utf-8"):
             d = json.loads(line)
             if "util_gpu" in d:
                 rows.append({"t": d["t"], "dev": d["util_gpu"],
@@ -5798,7 +5809,7 @@ def selftest():
         return rows
 
     def curve_marks(samples, meta_name, rep):
-        meta = json.load(open(os.path.join(lxroot, meta_name)))
+        meta = json.load(open(os.path.join(lxroot, meta_name), encoding="utf-8"))
         return [{"t_end": samples[-1]["t"], "wall_s": meta["wall_s"],
                  "load_s": (rep["load_ms"] or 0) / 1000.0,
                  "prompt_s": (rep["prompt_ms"] or 0) / 1000.0,
@@ -5963,7 +5974,7 @@ def selftest():
     #    file's table measured (verified against the file the day this
     #    landed), and its kv marker parses to f16/f16
     hp = parse_stderr(open(os.path.join(
-        rawroot, "healthy-metal", "pass1.stderr.txt")).read(), 10.0)
+        rawroot, "healthy-metal", "pass1.stderr.txt"), encoding="utf-8").read(), 10.0)
     if hp["tensor_types"] == {"f32": 177, "q8_0": 48, "q4_K": 132,
                               "q5_K": 48, "q6_K": 22} \
             and hp["kv_types"] == ["f16", "f16"]:
@@ -5971,7 +5982,7 @@ def selftest():
     # 4: the non-f16 sample measured here (-ctk q8_0 -ctv q8_0,
     #    committed raw) pins the K (q8_0) line shape
     qp = parse_stderr(open(os.path.join(
-        rawroot, "kv-q8", "ctk-q8.stderr.txt")).read(), 1.0)
+        rawroot, "kv-q8", "ctk-q8.stderr.txt"), encoding="utf-8").read(), 1.0)
     if qp["kv_types"] == ["q8_0", "q8_0"]:
         id_ok += 1
     # 5: the expert bank is the slowest dimension matching
@@ -6102,7 +6113,7 @@ def selftest():
     #    floats that survived a json round trip (0.800000011920929).
     #    One line renders both engines and neither shows sixteen digits.
     sv = map_server(json.load(open(os.path.join(
-        rawroot, "server-endpoint", "pass1.response.json"))), 9.0)
+        rawroot, "server-endpoint", "pass1.response.json"), encoding="utf-8")), 9.0)
     if settings_line(sv, "server") \
             == "temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7":
         st_ok += 1
@@ -6111,7 +6122,7 @@ def selftest():
     #    fills in llama.cpp's 0.8 default on ollama's behalf, which
     #    would be the one number in the block a reader could not trust.
     ol = map_ollama(json.load(open(os.path.join(
-        rawroot, "ollama-qwen35", "pass1.response.json"))), 10.0, None)
+        rawroot, "ollama-qwen35", "pass1.response.json"), encoding="utf-8")), 10.0, None)
     olline = settings_line(ol, "ollama")
     if ol["sampling"] is None and olline.startswith("not recorded") \
             and "ollama api" in olline and "temp" not in olline:
@@ -6136,7 +6147,7 @@ def selftest():
     # only and recomputable by hand from the committed curve
     en_ok, en_all = 0, 4
     entele = json.load(open(os.path.join(
-        rawroot, "healthy-metal", "telemetry.json")))
+        rawroot, "healthy-metal", "telemetry.json"), encoding="utf-8"))
     ensum = telemetry_summary(entele["samples"], entele["marks"])
     # 1: an independent recompute of the same figure straight off the
     #    raw samples: median watts inside each decode window, over the
@@ -6305,12 +6316,12 @@ def selftest():
         out = []
         for i in (1, 2, 3):
             base = os.path.join(rawroot, name, "pass{}".format(i))
-            meta = json.load(open(base + ".meta.json"))
+            meta = json.load(open(base + ".meta.json", encoding="utf-8"))
             if os.path.exists(base + ".stderr.txt"):
-                p = parse_stderr(open(base + ".stderr.txt").read(),
+                p = parse_stderr(open(base + ".stderr.txt", encoding="utf-8").read(),
                                  meta["wall_s"])
             else:
-                p = map_ollama(json.load(open(base + ".response.json")),
+                p = map_ollama(json.load(open(base + ".response.json", encoding="utf-8")),
                                meta["wall_s"], meta.get("ps"))
             # the artifact's own nonce, exactly as the replay loop reads
             # it: legs recorded before nonces existed carry None and are
@@ -6608,7 +6619,7 @@ def save_cache(payload, key=None):
             payload["measurements"] = records
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         tmp = CACHE_PATH + ".tmp.{}".format(os.getpid())
-        with open(tmp, "w") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=1)
         os.replace(tmp, CACHE_PATH)
     except OSError:
@@ -6617,7 +6628,7 @@ def save_cache(payload, key=None):
 
 def load_cache():
     try:
-        with open(CACHE_PATH) as f:
+        with open(CACHE_PATH, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
@@ -6947,7 +6958,36 @@ def main():
     sys.exit(exit_code)
 
 
+def windows_console():
+    """UTF-8 on both streams and VT escapes on the console, the two
+    things a Windows terminal does not do by itself. A redirected stream
+    would otherwise write the locale code page and choke on the block's
+    own characters; a console that refuses VT mode gets plain text."""
+    if os.name != "nt":
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    try:
+        k32 = ctypes.WinDLL("kernel32")
+        k32.GetStdHandle.restype = ctypes.c_void_p
+        k32.GetConsoleMode.argtypes = [ctypes.c_void_p,
+                                       ctypes.POINTER(ctypes.c_uint32)]
+        k32.SetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        for std in (-11, -12):
+            handle = k32.GetStdHandle(std)
+            mode = ctypes.c_uint32()
+            if k32.GetConsoleMode(handle, ctypes.byref(mode)) \
+                    and not k32.SetConsoleMode(handle, mode.value | 0x0004):
+                os.environ["NO_COLOR"] = "1"
+    except Exception:
+        os.environ["NO_COLOR"] = "1"
+
+
 def entrypoint():
+    windows_console()
     try:
         main()
     except SystemExit as e:

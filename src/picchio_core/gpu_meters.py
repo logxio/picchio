@@ -43,6 +43,7 @@ RE_TELE = {
 def _cmd_out(args, timeout=5):
     try:
         done = subprocess.run(args, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               timeout=timeout)
         return done.stdout
     except Exception:
@@ -64,7 +65,7 @@ def _collapse(per_device):
 
 def _read_int(path):
     try:
-        with open(path) as handle:
+        with open(path, encoding="utf-8") as handle:
             return int(handle.read().strip())
     except (OSError, ValueError):
         return None
@@ -211,9 +212,10 @@ class _IOAccel:
 # ------------------------------------------------------------ NVIDIA
 
 class _NVML:
-    """The NVIDIA meter on Linux: libnvidia-ml.so.1 is the library
-    nvidia-smi itself reads, resolvable wherever the driver is
-    installed (verified on driver 550.54.14, all eight core symbols).
+    """The NVIDIA meter on Linux and Windows: libnvidia-ml.so.1, or the
+    nvml.dll the driver drops into System32, is the library nvidia-smi
+    itself reads, resolvable wherever the driver is installed (verified
+    on driver 550.54.14, all eight core symbols).
     utilization.gpu is the percent of the last internal sample period
     (between 1/6 s and 1 s depending on the product, per the NVML
     docs) during which any kernel ran, so 4 Hz polling repeats values;
@@ -236,8 +238,21 @@ class _NVML:
                     ("free", ctypes.c_ulonglong),
                     ("used", ctypes.c_ulonglong)]
 
+    LIBS = ("nvml.dll", os.path.join(
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        "NVIDIA Corporation", "NVSMI", "nvml.dll")) \
+        if os.name == "nt" else ("libnvidia-ml.so.1",)
+
     def __init__(self):
-        self.lib = ctypes.CDLL("libnvidia-ml.so.1")
+        self.lib = None
+        for name in self.LIBS:
+            try:
+                self.lib = ctypes.CDLL(name)
+                break
+            except OSError:
+                continue
+        if self.lib is None:
+            raise OSError("no nvml library")
         if self.lib.nvmlInit_v2() != 0:
             raise OSError("nvmlInit_v2 failed")
         count = ctypes.c_uint()
@@ -370,7 +385,7 @@ class _AMDGPU:
         names = []
         for dev in self.cards:
             try:
-                with open(os.path.join(dev, "product_name")) as handle:
+                with open(os.path.join(dev, "product_name"), encoding="utf-8") as handle:
                     names.append(handle.read().strip() or None)
             except OSError:
                 names.append(None)
@@ -415,6 +430,14 @@ def open_meter(disabled=False):
             if meter.sample() is not None:
                 return meter
         return {"off": "no nvml/amdgpu"}
+    if sysname == "Windows":
+        try:
+            meter = _NVML()
+        except Exception:
+            return {"off": "no nvml"}
+        if meter.sample() is None:
+            return {"off": "no nvml data"}
+        return meter
     if sysname != "Darwin":
         return {"off": "not macos"}
     try:
@@ -427,11 +450,16 @@ def open_meter(disabled=False):
 
 
 def machine_gpu_name():
-    """The GPU for the machine fingerprint, or None. Linux only: on
-    macOS the chip string already names it."""
-    if platform.system() != "Linux":
+    """The GPU for the machine fingerprint, or None. Linux and Windows
+    only: on macOS the chip string already names it."""
+    sysname = platform.system()
+    if sysname == "Windows":
+        backends = (_NVML,)
+    elif sysname == "Linux":
+        backends = (_NVML, _AMDGPU)
+    else:
         return None
-    for backend in (_NVML, _AMDGPU):
+    for backend in backends:
         try:
             name = backend().device_name()
         except Exception:

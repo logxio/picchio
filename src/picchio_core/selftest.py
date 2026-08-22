@@ -5,7 +5,6 @@ import http.server
 import json
 import os
 import shutil
-import signal
 import socketserver
 import subprocess
 import sys
@@ -31,7 +30,7 @@ request = envelope.get("request", {})
 marker = request.get("sleepOnceMarker")
 if marker:
     try:
-        with open(marker, "x"):
+        with open(marker, "x", encoding="utf-8"):
             pass
     except FileExistsError:
         pass
@@ -340,7 +339,8 @@ def run_selftests(entry_argv):
         check("http_failure", http_result["exitCode"] == 3 and
               http_result["runtime"]["fail"] == 1)
 
-        # SIGKILL the runner after case one committed and case two started.
+        # Kill the runner outright (SIGKILL, TerminateProcess on Windows)
+        # after case one committed and case two started.
         marker = os.path.join(root, "kill.marker")
         kill_manifest = _queue(adapter, identity, [
             _case("done", identity),
@@ -364,10 +364,10 @@ def run_selftests(entry_argv):
 
         started = _wait_until(second_started)
         if started:
-            os.kill(proc.pid, signal.SIGKILL)
+            proc.kill()
         proc.wait(timeout=5)
         resumed = subprocess.run(command, capture_output=True, text=True,
-                                 timeout=15)
+                                 encoding="utf-8", timeout=15)
         try:
             resumed_json = json.loads(resumed.stdout)
         except ValueError:

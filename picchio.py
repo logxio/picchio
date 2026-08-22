@@ -6946,6 +6946,9 @@ def main():
             sampler["ev"] = "timing"
     if isinstance(sampler, GpuSampler):
         time.sleep(1.2)  # a few ticks of idle baseline before pass 1
+    # every lane writes this into its pass meta: --ctx leaves no trace in
+    # engine args or in an ollama response, so a replay that had to infer
+    # it would render the default and disagree with the committed block
     block_ctx = server_ctx(binpath) if mode == "server" else \
         (effective_ctx(args.extra, args.ctx)
          if mode == "llama.cpp" else args.ctx)
@@ -6965,7 +6968,7 @@ def main():
                                prompt=prompt, ctx=args.ctx)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "extra_args": args.extra,
-                    "prompt_nonce": nonce}
+                    "ctx": block_ctx, "prompt_nonce": nonce}
         elif mode == "server":
             p = run_server_pass(
                 binpath, lp("pass{}.response.json".format(i + 1)),
@@ -6979,7 +6982,7 @@ def main():
                 prompt=prompt, ctx=args.ctx)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "ps": ps,
-                    "prompt_nonce": nonce}
+                    "ctx": block_ctx, "prompt_nonce": nonce}
         p["nonce"] = nonce
         if isinstance(sampler, GpuSampler):
             sampler.mark_pass(p)

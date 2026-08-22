@@ -16,8 +16,8 @@ COMMAND_GROUPS = (
      ("diagnose", "run")),
     ("inspect", "Inspect the file",
      ("id", "plan")),
-    ("watch", "Watch a live setup",
-     ("guard", "watch", "monitor")),
+    ("guard", "Guard a live setup",
+     ("guard",)),
     ("share", "Share or check evidence",
      ("share", "verify", "compare", "vet")),
 )
@@ -58,19 +58,31 @@ COMMAND_CAPABILITIES = {
     },
     "guard": {
         "usage": "picchio guard [--keep-logs DIR] -- COMMAND",
-        "purpose": "wrap a command and report placement without killing it",
-    },
-    "watch": {
-        "usage": "picchio watch [PID|ollama] [--for SEC] [--json]",
-        "purpose": "sample whole-GPU activity beside a process",
-        "stdout": "picchio.watch.v1 with --json",
-        "evidence": "watch.samples.jsonl + watch.summary.json",
-    },
-    "monitor": {
-        "usage": "picchio monitor TARGET [--for SEC] [--json]",
-        "purpose": "probe a running server and catch intermittent fallback",
-        "stdout": "session JSON with --json",
-        "evidence": "probe response files with --keep-logs DIR",
+        "purpose": "say the moment something already running leaves the GPU; "
+                   "the argument picks the form",
+        "forms": {
+            "command": {
+                "usage": "picchio guard [--keep-logs DIR] -- COMMAND",
+                "purpose": "wrap a llama.cpp command you launch and warn on "
+                           "layers landing off the GPU, never killing it",
+                "exit": "passes through the wrapped command exit code",
+            },
+            "process": {
+                "usage": "picchio guard PID|ollama [--for SEC] [--json]",
+                "purpose": "show the loaded Ollama CPU/GPU split beside "
+                           "the OS GPU meter, or watch a process by PID",
+                "stdout": "picchio.watch.v1 with --json",
+                "evidence": "watch.samples.jsonl + watch.summary.json",
+            },
+            "server": {
+                "usage": "picchio guard URL|TAG [--every SEC] [--for SEC] "
+                         "[--residency] [--json]",
+                "purpose": "probe a running llama-server or Ollama tag on a "
+                           "timer and catch intermittent fallback",
+                "stdout": "session JSON with --json",
+                "evidence": "probe response files with --keep-logs DIR",
+            },
+        },
     },
     "share": {
         "usage": "picchio share [BLOCK] [--line|--row|--post]",
@@ -101,17 +113,17 @@ EXIT_CODES_BY_COMMAND = {
                  "2": "could not run", "3": "partial offload",
                  "4": "CPU fallback", "5": "conflicting evidence",
                  "7": "no timing evidence"},
-    "watch": {"0": "GPU working", "2": "could not run",
-              "4": "GPU idle"},
-    "monitor": {"0": "engaged throughout", "2": "could not run",
-                "4": "CPU fallback seen"},
     "verify": {"0": "self-consistent", "2": "unreadable",
                "5": "contradiction found"},
     "run": {"0": "completed", "2": "could not run or incomplete",
             "3": "runtime failure", "4": "quality failure",
             "5": "causal evidence conflict", "6": "safety stop",
             "130": "interrupted"},
-    "guard": {"note": "passes through the wrapped command exit code"},
+    "guard": {"0": "GPU working or engaged throughout", "2": "could not run",
+              "3": "partial offload seen",
+              "4": "GPU idle or CPU fallback seen",
+              "note": "the -- COMMAND form passes through the wrapped "
+                      "command exit code"},
 }
 
 
@@ -121,11 +133,11 @@ def command_help_epilog():
   picchio TARGET
     measure a GGUF, Ollama tag or running llama-server
   picchio guard -- COMMAND
-    warn when a command leaves model layers on the CPU
-  picchio watch [PID|ollama]
-    watch GPU activity beside a running model
-  picchio monitor TARGET
-    catch a server that drops out of its normal performance lane
+    warn when a command you launch leaves model layers on the CPU
+  picchio guard PID|ollama
+    show Ollama CPU/GPU placement or GPU activity beside a process
+  picchio guard URL|TAG
+    probe a running server and catch the moment it drops out of its lane
   picchio compare A.txt B.txt
     show the first changed setting, then compare the rates
 

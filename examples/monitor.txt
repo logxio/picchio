@@ -1,11 +1,11 @@
-picchio monitor: probing http://127.0.0.1:8099 every 6 s (ctx 4096); ctrl-c to stop
-picchio monitor: 07:42:42 probe 1   ENGAGED  prefill 558.9 tok/s, decode 20.7 tok/s (27.0x)
-picchio monitor: 07:42:50 probe 2   ENGAGED  prefill 560.0 tok/s, decode 20.8 tok/s (27.0x)
-picchio monitor: 07:42:57 probe 3   ENGAGED  prefill 547.5 tok/s, decode 21.0 tok/s (26.1x)
-picchio monitor: baseline locked at 27x prefill/decode for this engine; a collapse from it now flags too
-picchio monitor: probe 4 could not reach the engine: Remote end closed connection without response
-picchio monitor: probe 5 could not reach the engine: <urlopen error [Errno 61] Connection refused>
-picchio monitor: 07:43:52 probe 6   NOT ENGAGED  prefill 24.5 tok/s, decode 10.9 tok/s (2.2x, was 27x)
-picchio monitor: placement changed ENGAGED -> NOT ENGAGED at probe 6
-picchio monitor: 07:44:35 probe 7   NOT ENGAGED  prefill 24.4 tok/s, decode 11.3 tok/s (2.2x, was 27x)
-picchio monitor: SILENT CPU FALLBACK seen - 5 probes, 3 engaged, 2 on cpu, 1 placement change(s), worst prefill 2.2x decode
+picchio guard: probing http://127.0.0.1:8099 every 6 s (ctx 4096); ctrl-c to stop
+picchio guard: 07:42:42 probe 1   ENGAGED  prefill 558.9 tok/s, decode 20.7 tok/s (27.0x)
+picchio guard: 07:42:50 probe 2   ENGAGED  prefill 560.0 tok/s, decode 20.8 tok/s (27.0x)
+picchio guard: 07:42:57 probe 3   ENGAGED  prefill 547.5 tok/s, decode 21.0 tok/s (26.1x)
+picchio guard: baseline locked at 27x prefill/decode for this engine; a collapse from it now flags too
+picchio guard: probe 4 could not reach the engine: Remote end closed connection without response
+picchio guard: probe 5 could not reach the engine: <urlopen error [Errno 61] Connection refused>
+picchio guard: 07:43:52 probe 6   NOT ENGAGED  prefill 24.5 tok/s, decode 10.9 tok/s (2.2x, was 27x)
+picchio guard: placement changed ENGAGED -> NOT ENGAGED at probe 6
+picchio guard: 07:44:35 probe 7   NOT ENGAGED  prefill 24.4 tok/s, decode 11.3 tok/s (2.2x, was 27x)
+picchio guard: SILENT CPU FALLBACK seen - 5 probes, 3 engaged, 2 on cpu, 1 placement change(s), worst prefill 2.2x decode

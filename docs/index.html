@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Picchio: local LLM GPU check</title>
-  <meta name="description" content="Compare local LLM speed with the GPU placement, settings, memory and power that produced it.">
+  <title>Picchio — catch local LLM CPU fallback</title>
+  <meta name="description" content="Run Picchio once to see GPU placement, prefill, decode, memory and power behind your local LLM speed.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://logxio.github.io/picchio/">
   <meta property="og:title" content="CPU fallback: prefill 22× slower, decode only 1.7×">
@@ -16,68 +16,65 @@
   <meta name="twitter:image" content="https://logxio.github.io/picchio/social-preview.png">
   <style>
     :root {
-      color-scheme: dark;
-      --bg: #0d1117;
-      --panel: #11161d;
-      --line: #30363d;
-      --text: #f0f6fc;
-      --muted: #8b949e;
-      --green: #3fb950;
-      --red: #f85149;
-      --gold: #d4a72c;
+      color-scheme: light;
+      --bg: #f9f9f8;
+      --panel: #ffffff;
+      --line: #000000;
+      --text: #000000;
+      --green: #00827f;
+      --green-hover: #006b68;
+      --red: #b42318;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
-    a { color: inherit; }
-    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 28px 0; }
-    .brand { font-family: var(--mono); font-weight: 800; letter-spacing: .22em; text-decoration: none; }
-    .star { border: 1px solid var(--line); padding: 10px 14px; text-decoration: none; font-weight: 700; }
-    .star:hover, .star:focus-visible { border-color: var(--text); }
-    main { padding: 46px 0 80px; }
-    h1 { max-width: 980px; margin: 0; font-size: clamp(42px, 7vw, 78px); line-height: .98; letter-spacing: -.045em; }
-    .proof { display: grid; grid-template-columns: 1.2fr repeat(3, 1fr); margin-top: 42px; border: 1px solid var(--line); }
-    .proof > div { min-width: 0; padding: 22px; border-right: 1px solid var(--line); }
-    .proof > div:last-child { border-right: 0; }
-    .label { display: block; margin-bottom: 10px; color: var(--muted); font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+    a { color: inherit; text-decoration: none; }
+    .shell { width: min(960px, calc(100% - 48px)); margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 30px 0; }
+    .brand { font-family: var(--mono); font-weight: 800; letter-spacing: .18em; text-decoration: none; }
+    .star { color: var(--green); font-weight: 800; }
+    .star:hover, .star:focus-visible { color: var(--green-hover); }
+    main { padding: 64px 0 96px; }
+    h1 { max-width: 920px; margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: clamp(48px, 7.8vw, 82px); font-weight: 600; line-height: .98; letter-spacing: -.05em; }
+    .proof { display: grid; grid-template-columns: 1.2fr repeat(3, 1fr); gap: 12px; margin-top: 52px; }
+    .proof > div { min-width: 0; padding: 22px 18px; background: #ffffff; }
+    .label { display: block; margin-bottom: 10px; color: var(--green); font-family: var(--mono); font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
     .value { font-family: var(--mono); font-size: clamp(20px, 2.8vw, 32px); font-weight: 800; white-space: nowrap; }
     .gpu { color: var(--green); }
     .cpu { color: var(--red); }
-    section { margin-top: 74px; }
+    .finding { max-width: 760px; margin: 34px 0 0; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: clamp(22px, 3vw, 30px); line-height: 1.35; }
+    section { margin-top: 88px; }
     .section-head { margin-bottom: 20px; }
-    h2 { margin: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.03em; }
+    h2 { margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: clamp(34px, 4.8vw, 52px); font-weight: 600; letter-spacing: -.035em; }
     .filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 14px; }
     select, button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 0; font: inherit; padding: 10px 12px; }
     button { cursor: pointer; }
-    button:hover, button:focus-visible, select:focus-visible { border-color: var(--text); outline: none; }
-    .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+    button:hover, button:focus-visible, select:focus-visible { color: var(--green-hover); outline: 2px solid var(--green); outline-offset: 2px; }
+    .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
-    th, td { padding: 13px 14px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-    th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-    tbody tr:last-child td { border-bottom: 0; }
-    tbody tr:hover { background: #151b23; }
+    th, td { padding: 13px 14px; text-align: left; white-space: nowrap; }
+    th { color: var(--green); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    tbody tr:hover { background: rgba(0, 130, 127, .08); }
     td.num, th.num { text-align: right; }
-    .result { text-decoration-color: var(--muted); text-underline-offset: 3px; }
+    .result { color: var(--green); }
     .fallback { color: var(--red); }
     .healthy { color: var(--green); }
-    .install { display: grid; grid-template-columns: 1fr auto; gap: 0; margin-top: 22px; border: 1px solid var(--line); background: var(--panel); }
-    pre { margin: 0; padding: 20px; overflow-x: auto; font-family: var(--mono); font-size: 14px; line-height: 1.65; }
-    .copy { border: 0; border-left: 1px solid var(--line); padding: 0 22px; }
+    .submit-box { margin-top: 22px; padding: 18px; background: #ffffff; }
+    textarea { display: block; width: 100%; min-height: 220px; resize: vertical; border: 0; background: transparent; color: var(--text); font-family: var(--mono); font-size: 14px; line-height: 1.55; }
+    textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 6px; }
+    .submit-actions { display: flex; align-items: center; gap: 18px; margin-top: 16px; }
+    .submit { border: 0; background: var(--green); color: #ffffff; font-weight: 800; }
+    .submit:disabled { cursor: default; opacity: .45; }
     .actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 22px; }
-    .actions a { font-weight: 700; text-underline-offset: 4px; }
-    footer { margin-top: 80px; padding: 28px 0; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 13px; }
+    .actions a { color: var(--green); font-weight: 800; }
+    .actions a:hover, .actions a:focus-visible { color: var(--green-hover); }
     @media (max-width: 760px) {
-      .shell { width: min(100% - 24px, 1180px); }
+      .shell { width: min(100% - 28px, 960px); }
       header { padding: 20px 0; }
-      main { padding-top: 24px; }
+      main { padding-top: 42px; }
       .proof { grid-template-columns: 1fr 1fr; }
-      .proof > div { border-bottom: 1px solid var(--line); }
-      .proof > div:nth-child(2) { border-right: 0; }
-      .proof > div:nth-child(3), .proof > div:nth-child(4) { border-bottom: 0; }
-      .install { grid-template-columns: 1fr; }
-      .copy { border-left: 0; border-top: 1px solid var(--line); padding: 14px; }
+      .submit-actions { align-items: flex-start; flex-direction: column; }
     }
   </style>
 </head>
@@ -88,7 +85,7 @@
       <a class="star" href="https://github.com/logxio/picchio">Star on GitHub ↗</a>
     </header>
     <main>
-      <h1>A 200 OK does not mean your local LLM used the GPU.</h1>
+      <h1>I caught a local LLM returning 200 OK while running 0 of 33 layers on the GPU.</h1>
 
       <div class="proof" aria-label="Same-file GPU and CPU comparison">
         <div><span class="label">Placement</span><span class="value"><span class="gpu">33/33</span> → <span class="cpu">0/33</span></span></div>
@@ -96,6 +93,21 @@
         <div><span class="label">Decode</span><span class="value">1.7× slower</span></div>
         <div><span class="label">HTTP</span><span class="value">200 both</span></div>
       </div>
+
+      <p class="finding">I ran the same 9B file twice on an M5. At 33/33 GPU layers, prefill hit 588.0 tok/s. At 0/33, it fell to 26.8. Both requests returned HTTP 200.</p>
+
+      <section id="submit-result">
+        <div class="section-head">
+          <h2>Paste your result</h2>
+        </div>
+        <div class="submit-box">
+          <textarea id="receipt" aria-label="Picchio result" placeholder="Paste the Picchio receipt here"></textarea>
+          <div class="submit-actions">
+            <button class="submit" id="open-issue" type="button" disabled>Open GitHub issue ↗</button>
+            <a class="result" href="https://github.com/logxio/picchio#run-it">Get a result on GitHub ↗</a>
+          </div>
+        </div>
+      </section>
 
       <section id="benchmarks">
         <div class="section-head">
@@ -113,24 +125,7 @@
         </div>
       </section>
 
-      <section id="run">
-        <div class="section-head">
-          <h2>Run it on your machine</h2>
-        </div>
-        <div class="install">
-          <pre id="install-command">curl -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio
-chmod +x picchio
-./picchio</pre>
-          <button class="copy" id="copy" type="button">Copy</button>
-        </div>
-        <div class="actions">
-          <a href="https://github.com/logxio/picchio/issues/new?template=verdict-report.md">Add your result ↗</a>
-          <a href="https://yansu.me/writing/a-200-ok-does-not-mean-your-llm-used-the-gpu/">See how I caught CPU fallback ↗</a>
-          <a href="https://github.com/logxio/picchio">Get Picchio ↗</a>
-        </div>
-      </section>
     </main>
-    <footer>Run Picchio on your model and add your machine.</footer>
   </div>
   <script>
     const esc = value => String(value ?? "n/a").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -168,10 +163,21 @@ chmod +x picchio
     });
 
     ["machine", "model"].forEach(id => document.querySelector(`#${id}`).addEventListener("change", renderBenchmarks));
-    document.querySelector("#copy").addEventListener("click", async event => {
-      await navigator.clipboard.writeText(document.querySelector("#install-command").textContent);
-      event.currentTarget.textContent = "Copied";
-      setTimeout(() => { event.currentTarget.textContent = "Copy"; }, 1400);
+    const receipt = document.querySelector("#receipt");
+    const issue = document.querySelector("#open-issue");
+    receipt.addEventListener("input", () => {
+      issue.disabled = !receipt.value.trim();
+    });
+    issue.addEventListener("click", () => {
+      const value = receipt.value.trim();
+      if (!value) return;
+      const model = value.match(/^model\s+([^,\n]+)/m)?.[1] || "local LLM run";
+      const body = `\`\`\`text\n${value}\n\`\`\`\n`;
+      const url = new URL("https://github.com/logxio/picchio/issues/new");
+      url.searchParams.set("template", "verdict-report.md");
+      url.searchParams.set("title", `verdict: ${model}`);
+      url.searchParams.set("body", body);
+      window.open(url, "_blank", "noopener,noreferrer");
     });
   </script>
 </body>

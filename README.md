@@ -12,12 +12,12 @@
 
 <p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse real results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<img src="assets/picchio-demo.svg" width="680" alt="Picchio compares the same Qwen model on GPU and CPU and finds a 22x prefill drop">
+<img src="assets/picchio-demo.svg" width="680" alt="A local LLM returns HTTP 200 while Picchio catches CPU fallback with 0 of 33 layers on the GPU">
 
 </div>
 
-A local LLM can return HTTP 200 and generate text while running **0 of 33
-layers on the GPU**. I built Picchio to catch that in one run.
+**CPU FALLBACK: 0/33 layers on the GPU.** The same request returned **HTTP
+200 OK** and generated text.
 
 On the same Apple M5, with the same Qwen3.5-9B file:
 
@@ -28,9 +28,8 @@ On the same Apple M5, with the same Qwen3.5-9B file:
 | decode | 21.1 tok/s | 12.2 tok/s |
 | HTTP response | 200 | 200 |
 
-Picchio reads the engine's placement report beside the operating system's
-GPU meter, then shows prefill, decode, wall-clock speed, memory and power in
-one result.
+The engine reported zero GPU layers. The operating system measured 0% GPU
+work. Prefill fell from 588.0 to 26.8 tok/s.
 
 ## Run it
 
@@ -59,9 +58,7 @@ uses only the standard library.
 | I want to… | Run |
 |---|---|
 | catch CPU fallback and measure the run | `./picchio MODEL` |
-| warn when a command leaves layers on the CPU | `./picchio guard -- COMMAND` |
-| watch a loaded Ollama model or GPU process | `./picchio watch ollama --for 8` |
-| catch a server that drops out of its normal lane | `./picchio monitor MODEL` |
+| guard something already running and get told the moment it leaves the GPU: your own command, a loaded model, a server | `./picchio guard -- COMMAND` · `./picchio guard ollama` · `./picchio guard http://127.0.0.1:8080` |
 | compare two runs and show the first changed setting | `./picchio compare before.txt after.txt` |
 | paste a compact result into an issue or post | `./picchio MODEL --share row` |
 
@@ -98,7 +95,7 @@ in [examples/](examples/).
 - Ollama: CPU/GPU weight split and timing
 - macOS: Apple GPU activity, memory, power and energy per token
 - NVIDIA Linux: GPU activity, memory, power and energy per token through NVML
-- AMD Linux: GPU activity and memory through amdgpu sysfs
+- AMD Linux: GPU activity and memory through amdgpu sysfs. **AMD readings are reference-only for now. I am looking for real Radeon runs from the community; an AMD verdict block is the contribution I want most.**
 
 Point Picchio at a GGUF path, an Ollama tag or a running llama-server URL.
 The result tells you where the model ran and which number is safe to compare.

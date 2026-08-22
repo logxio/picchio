@@ -1920,8 +1920,8 @@ def colorize(text, stream=None):
                 if word in line:
                     line = line.replace(word, BOLD + col + word + RESET, 1)
                     break
-        elif line.startswith("picchio monitor: "):
-            if line.startswith("picchio monitor: probing "):
+        elif line.startswith("picchio guard: "):
+            if line.startswith("picchio guard: probing "):
                 line = DIM + line + RESET      # one-time setup scaffolding
             else:
                 # the timestamp, probe index and the "was Nx" baseline aside
@@ -2337,22 +2337,68 @@ def guard(cmd, keep_dir=None):
     sys.exit(code if code >= 0 else 128 - code)
 
 
+GUARD_USAGE = ("usage: picchio guard [--keep-logs DIR] -- <command...>\n"
+               "       picchio guard PID|ollama [--for SEC] [--json] "
+               "[--keep-logs DIR]\n"
+               "       picchio guard URL|TAG [--every SEC] [--for SEC] "
+               "[--residency] [--json] [--keep-logs DIR]")
+
+
 def guard_cli(argv):
-    keep = None
+    """One verb for anything that is already running. The argument's
+    shape picks the form, the same way a bare TARGET picks gguf, ollama
+    or server mode: after -- it wraps a command you launch; a PID or the
+    word ollama points the OS GPU meter at that process or the loaded
+    model; a llama-server url or an ollama tag is probed on a timer."""
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio guard [--keep-logs DIR] -- <command...>\n"
-              "wrap a llama.cpp command; warn on stderr the moment its\n"
-              "own log shows layers landing off the GPU, never kill it,\n"
-              "and print a placement summary when it exits.")
+        print(GUARD_USAGE + "\n"
+              "say the moment something that is already running leaves the\n"
+              "GPU. after -- it wraps a llama.cpp command and warns on stderr\n"
+              "when its own log shows layers landing off the GPU, never\n"
+              "killing it. the word ollama shows its CPU/GPU split beside\n"
+              "the OS meter; a PID uses the OS meter alone (macOS). a\n"
+              "llama-server url or an ollama tag is probed on a\n"
+              "timer and any probe whose prefill/decode ratio collapses from\n"
+              "the engine's own healthy baseline is flagged; --residency also\n"
+              "reads what the engine holds against the weights on disk.\n"
+              "--json keeps the human conclusion on stderr and writes the\n"
+              "summary to stdout.")
         sys.exit(0)
-    if argv[:1] == ["--keep-logs"] and len(argv) > 1:
-        keep = argv[1]
-        os.makedirs(keep, exist_ok=True)
-        argv = argv[2:]
-    if argv[:1] != ["--"] or len(argv) < 2:
-        sys.exit("picchio guard: usage: picchio guard "
-                 "[--keep-logs DIR] -- <command...>")
-    guard(argv[1:], keep)
+    if "--" in argv:
+        keep = None
+        if argv[:1] == ["--keep-logs"] and len(argv) > 1:
+            keep = argv[1]
+            os.makedirs(keep, exist_ok=True)
+            argv = argv[2:]
+        if argv[:1] != ["--"] or len(argv) < 2:
+            sys.exit("picchio guard: put the command after --\n" + GUARD_USAGE)
+        guard(argv[1:], keep)
+        return
+    if "--engine" in argv:
+        watch_cli(argv)
+        return
+    target, i = None, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--for", "--every", "--keep-logs"):
+            i += 2
+        elif a.startswith("-"):
+            i += 1
+        else:
+            target = a
+            break
+    if target is None:
+        sys.exit("picchio guard: say what to guard: a PID, the word ollama, "
+                 "a llama-server url, an ollama tag, or -- followed by "
+                 "the command to run.\n" + GUARD_USAGE)
+    if target.isdigit() or target == "ollama":
+        watch_cli(argv)
+        return
+    if monitor_target_mode(target) is None:
+        sys.exit("picchio guard: {!r} looks like a file. guard watches "
+                 "something already running; to measure a file run "
+                 "picchio {}.".format(target, target))
+    monitor_cli(argv)
 
 
 # ----------------------------------------------------------------- compare
@@ -2792,9 +2838,9 @@ def proc_name(pid):
     return os.path.basename(out[0]) if out and out[0] else "?"
 
 
-def ollama_loaded():
-    """The first model ollama currently has resident, or None with a
-    reason string. watch uses it only as a label for what is running."""
+def ollama_loaded_entry():
+    """The first model Ollama currently has resident, with the placement
+    fields from /api/ps, or None with a reason string."""
     if not ollama_reachable():
         return None, "no ollama is answering at {}".format(OLLAMA_HOST)
     try:
@@ -2803,7 +2849,32 @@ def ollama_loaded():
         return None, "ollama did not answer /api/ps"
     if not models:
         return None, "ollama is running but no model is loaded"
-    return models[0].get("name") or models[0].get("model") or "?", None
+    return models[0], None
+
+
+def ollama_loaded():
+    """The first resident Ollama model name, or None with a reason."""
+    entry, why = ollama_loaded_entry()
+    if entry is None:
+        return None, why
+    return entry.get("name") or entry.get("model") or "?", None
+
+
+def ollama_watch_placement(entry):
+    """Normalize Ollama's loaded CPU/GPU split for watch output."""
+    if not entry:
+        return None
+    size, vram = entry.get("size"), entry.get("size_vram")
+    if not size or vram is None:
+        return None
+    frac = max(0.0, min(1.0, float(vram) / float(size)))
+    gpu = int(round(100 * frac))
+    return {
+        "source": "ollama ps",
+        "cpuPercent": 100 - gpu,
+        "gpuPercent": gpu,
+        "contextLength": entry.get("context_length"),
+    }
 
 
 def watch_summary(samples):
@@ -2826,12 +2897,27 @@ def watch_summary(samples):
     }
 
 
-def watch_verdict(summ, ctx):
+def watch_verdict(summ, ctx, placement=None):
     """Machine level placement read: is the GPU doing the work. ctx is a
     label for what is being watched (a process, an ollama model) or None
     for the whole machine; when set, the whole-GPU caveat is spelled out
     rather than pretending the number belongs to that one job."""
     wm = summ["work_med"]
+    if placement:
+        gpu = placement["gpuPercent"]
+        cpu = placement["cpuPercent"]
+        where = "Ollama reports {}% CPU / {}% GPU placement".format(
+            cpu, gpu)
+        if placement.get("contextLength"):
+            where += " at ctx {}".format(placement["contextLength"])
+        if gpu < 5:
+            return "CPU FALLBACK", where + "."
+        if gpu < 95:
+            para = where + "."
+            if wm is not None and wm >= 50:
+                para += (" The GPU is active, but it does not hold the whole "
+                         "model.")
+            return "PARTIAL OFFLOAD", para
     if wm is None:
         return "GPU UNREADABLE", "the gpu meter returned no usable samples."
     w = ", {:.1f} W".format(summ["watts"]) if summ["watts"] is not None else ""
@@ -2858,10 +2944,16 @@ def watch_verdict(summ, ctx):
     return "GPU MIXED", para
 
 
-def render_watch(ctx, summ, state, para):
-    out = ["picchio watch" + (": " + ctx if ctx else "")]
+def render_watch(ctx, summ, state, para, placement=None):
+    out = ["picchio guard" + (": " + ctx if ctx else "")]
     out.append("  window   {:.1f} s, {} samples at {:.0f} Hz  (whole "
                "gpu)".format(summ["secs"], summ["n"], TELE_HZ))
+    if placement:
+        line = "  placement {}% CPU / {}% GPU".format(
+            placement["cpuPercent"], placement["gpuPercent"])
+        if placement.get("contextLength"):
+            line += ", ctx {}".format(placement["contextLength"])
+        out.append(line + "  (ollama ps)")
     parts = []
     if summ["work_med"] is not None:
         parts.append("work {:.0f}% median".format(summ["work_med"]))
@@ -2891,7 +2983,8 @@ def watch_sample_json(sample, t0):
     }
 
 
-def watch_json(target, summ, state, exit_code, started, ended, stop_reason):
+def watch_json(target, summ, state, exit_code, started, ended, stop_reason,
+               placement=None):
     """Stable watch artifact. Field names carry units; null means absent."""
     warnings = ["GPU metrics are whole-GPU, not per-process attribution."]
     for key, label in (("utilization", "GPU utilization"),
@@ -2920,6 +3013,7 @@ def watch_json(target, summ, state, exit_code, started, ended, stop_reason):
         },
         "verdict": state, "exitCode": exit_code,
         "stopReason": stop_reason, "attribution": "whole_gpu",
+        "enginePlacement": placement,
         "warnings": warnings,
     }
 
@@ -2938,22 +3032,24 @@ def write_watch_logs(directory, samples, payload):
 
 
 def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
-    ctx, name = None, None
+    ctx, name, placement = None, None, None
     if pid is not None and engine is not None:
-        sys.exit("picchio watch: give a pid or an engine, not both.")
+        sys.exit("picchio guard: give a pid or an engine, not both.")
     if engine is not None:
         if engine != "ollama":
-            sys.exit("picchio watch: only --engine ollama is supported "
-                     "(any other engine: give its pid, or just watch the "
+            sys.exit("picchio guard: only --engine ollama is supported "
+                     "(any other engine: give its pid, or guard the "
                      "whole gpu with no argument).")
-        name, why = ollama_loaded()
-        if name is None:
-            sys.exit("picchio watch: {}. Load a model and generate, then "
-                     "watch.".format(why))
+        entry, why = ollama_loaded_entry()
+        if entry is None:
+            sys.exit("picchio guard: {}. Load a model and generate, then "
+                     "guard it.".format(why))
+        name = entry.get("name") or entry.get("model") or "?"
+        placement = ollama_watch_placement(entry)
         ctx = "ollama model " + name
     if pid is not None:
         if not pid_alive(pid):
-            sys.exit("picchio watch: no process with pid {}.".format(pid))
+            sys.exit("picchio guard: no process with pid {}.".format(pid))
         name = proc_name(pid)
         ctx = "{} (pid {})".format(name, pid)
     target = {"pid": pid, "name": name, "engine": engine}
@@ -2961,26 +3057,26 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
         try:
             os.makedirs(keep_dir, exist_ok=True)
         except OSError as e:
-            sys.exit("picchio watch: could not create {}: {}".format(
+            sys.exit("picchio guard: could not create {}: {}".format(
                 keep_dir, e))
     started = time.time()
     sampler = telemetry_start()
     if not isinstance(sampler, GpuSampler):
-        sys.exit("picchio watch: no gpu meter here ({}). watch needs the "
+        sys.exit("picchio guard: no gpu meter here ({}). this form needs the "
                  "macos ioreg meter; on other platforms there is no engine "
                  "free placement signal yet.".format(sampler.get("off", "?")))
     if sampler._backend.src != "ioreg":
         # the linux meters feed measure mode only for now; watch has its
         # own calibration and is a separate milestone there
         sampler.stop()
-        sys.exit("picchio watch: watch is ioreg only for now; the {} "
+        sys.exit("picchio guard: process sampling is ioreg only for now; the {} "
                  "meter runs inside measure mode.".format(
                      sampler._backend.src))
     # window: an explicit --for wins; otherwise watch until the pid exits
     # (capped), or a short fixed window for the whole-gpu snapshot
     if duration is None:
         duration = 3600.0 if pid is not None else 6.0
-    sys.stderr.write("picchio watch: sampling the gpu{}{} ...\n".format(
+    sys.stderr.write("picchio guard: sampling the gpu{}{} ...\n".format(
         " while " + ctx if ctx else "",
         "" if pid is not None and duration >= 3600 else
         " for {:.0f} s".format(duration)))
@@ -3000,10 +3096,11 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
     sampler.stop()
     summ = watch_summary(sampler.samples)
     summ["throttled"] = sampler._hot or sampler._backend.throttled()
-    state, para = watch_verdict(summ, ctx)
-    code = 4 if state == "GPU IDLE" else 0
+    state, para = watch_verdict(summ, ctx, placement)
+    code = 3 if state == "PARTIAL OFFLOAD" else \
+        4 if state in ("GPU IDLE", "CPU FALLBACK") else 0
     payload = watch_json(target, summ, state, code, started, time.time(),
-                         stop_reason)
+                         stop_reason, placement)
     write_error = None
     if keep_dir:
         try:
@@ -3012,26 +3109,24 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
             write_error, code = e, 2
             payload["exitCode"] = code
             payload["warnings"].append("Evidence write failed: {}".format(e))
-    human = render_watch(ctx, summ, state, para)
+    human = render_watch(ctx, summ, state, para, placement)
     if as_json:
         sys.stderr.write(colorize(human, sys.stderr) + "\n")
         print(json.dumps(payload, indent=1))
     else:
         print(colorize(human))
     if write_error:
-        sys.stderr.write("picchio watch: could not write evidence in {}: {}\n"
+        sys.stderr.write("picchio guard: could not write evidence in {}: {}\n"
                          .format(keep_dir, write_error))
     sys.exit(code)
 
 
 def watch_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio watch [PID|ollama] [--for SEC] [--json] "
+        print("usage: picchio guard [PID|ollama] [--for SEC] [--json] "
               "[--keep-logs DIR]\n"
-              "point the os gpu meter at a running inference process (or\n"
-              "the whole gpu) and report whether the gpu is doing the work,\n"
-              "without parsing any engine's output. engine agnostic: works\n"
-              "for mlx, lm studio, anything. macOS only (needs ioreg).\n"
+              "for ollama, show its loaded CPU/GPU split beside the macOS\n"
+              "GPU meter. for a PID, read the macOS GPU meter alone.\n"
               "--json keeps this human conclusion on stderr and writes a\n"
               "picchio.watch.v1 summary to stdout. --keep-logs writes\n"
               "watch.samples.jsonl and watch.summary.json. --engine ollama\n"
@@ -3045,9 +3140,9 @@ def watch_cli(argv):
             try:
                 dur = float(argv[i + 1])
             except ValueError:
-                sys.exit("picchio watch: --for wants a number of seconds.")
+                sys.exit("picchio guard: --for wants a number of seconds.")
             if not dur > 0:
-                sys.exit("picchio watch: --for wants a positive number.")
+                sys.exit("picchio guard: --for wants a positive number.")
             i += 2
         elif a == "--engine" and i + 1 < len(argv):
             engine, i = argv[i + 1], i + 2
@@ -3060,8 +3155,8 @@ def watch_cli(argv):
         elif not a.startswith("-") and pid is None and engine is None:
             engine, i = a, i + 1
         else:
-            sys.exit("picchio watch: unexpected argument {!r}.\nusage: "
-                     "picchio watch [PID|ollama] [--for SEC] [--json] "
+            sys.exit("picchio guard: unexpected argument {!r}.\nusage: "
+                     "picchio guard [PID|ollama] [--for SEC] [--json] "
                      "[--keep-logs DIR]".format(a))
     watch(pid, engine, dur, keep, as_json)
 
@@ -3443,7 +3538,7 @@ def monitor_line(stamp, i, state, ratio, prefill, decode, baseline=None):
     monitor branch in colorize(). A degraded probe carries the baseline it
     fell from, so the line shows the call was made against this server and
     not a fixed number."""
-    head = "picchio monitor: {} probe {:<3} {}".format(
+    head = "picchio guard: {} probe {:<3} {}".format(
         stamp, i, MON_TAG[state])
     if state == "NODATA":
         return head + "  the server returned no usable timings"
@@ -3458,7 +3553,7 @@ def monitor_summary_line(summ):
     """The one line printed when monitor stops: what it saw over the whole
     session, and the verdict that sets the exit code."""
     if summ["n"] == 0:
-        return "picchio monitor: no probes completed."
+        return "picchio guard: no probes completed."
     parts = ["{} probes".format(summ["n"]),
              "{} engaged".format(summ["ok"]),
              "{} on cpu".format(summ["flag"])]
@@ -3469,17 +3564,17 @@ def monitor_summary_line(summ):
             summ["worst_ratio"]))
     verdict = "SILENT CPU FALLBACK seen" if summ["flag"] \
         else "ENGAGED throughout"
-    return "picchio monitor: {} - {}".format(verdict, ", ".join(parts))
+    return "picchio guard: {} - {}".format(verdict, ", ".join(parts))
 
 
 def _mon_secs(flag, val):
     try:
         s = float(val)
     except ValueError:
-        sys.exit("picchio monitor: {} wants a number of seconds.".format(
+        sys.exit("picchio guard: {} wants a number of seconds.".format(
             flag))
     if s <= 0:
-        sys.exit("picchio monitor: {} wants a positive number.".format(flag))
+        sys.exit("picchio guard: {} wants a positive number.".format(flag))
     return s
 
 
@@ -3497,7 +3592,7 @@ def _monitor_wait(t0, every, deadline):
 def monitor_target_mode(arg):
     """What kind of running engine a monitor target names: 'server' for an
     http(s) llama-server url, 'ollama' for a bare model tag, None for a
-    file path (monitor watches a running server, never a file on disk)."""
+    file path (guard watches a running server, never a file on disk)."""
     if arg.startswith(("http://", "https://")):
         return "server"
     if "/" in arg or arg.lower().endswith(".gguf"):
@@ -3546,16 +3641,16 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
     if mode == "ollama":
         ver = ollama_reachable()
         if not ver:
-            sys.exit("picchio monitor: no ollama is answering at {}. Start "
+            sys.exit("picchio guard: no ollama is answering at {}. Start "
                      "it, or check OLLAMA_HOST.".format(OLLAMA_HOST))
         if not ollama_has_model(target):
-            sys.exit("picchio monitor: ollama has no model tagged {}; check "
+            sys.exit("picchio guard: ollama has no model tagged {}; check "
                      "`ollama list`.".format(target))
         engine, ctx = "ollama " + ver, CTX
     else:
         ok, why = server_health(target)
         if not ok:
-            sys.exit("picchio monitor: " + why)
+            sys.exit("picchio guard: " + why)
         build = server_props(target).get("build_info")
         engine = "llama-server" + (" " + str(build) if build else "")
         ctx = server_ctx(target)
@@ -3571,15 +3666,15 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
             res_bytes = None
         if res_path is None:
             sys.stderr.write(
-                "picchio monitor: cannot find the weights file for {}; the "
+                "picchio guard: cannot find the weights file for {}; the "
                 "residency lane abstains and the placement lane runs as "
                 "usual\n".format(target))
         else:
             sys.stderr.write(
-                "picchio monitor: residency on {:.2f} GiB of weights\n"
+                "picchio guard: residency on {:.2f} GiB of weights\n"
                 .format((res_bytes or 0) / 1024 ** 3))
     sys.stderr.write(
-        "picchio monitor: probing {} every {:.0f} s (ctx {}); "
+        "picchio guard: probing {} every {:.0f} s (ctx {}); "
         "ctrl-c to stop\n".format(target, every, ctx))
     events, timeline, last_decisive, i = [], [], None, 0
     baseline, healthy = None, []
@@ -3599,7 +3694,7 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
                 # an engine that stopped answering is an event worth a line,
                 # but not a cpu conviction; keep the timer running so a
                 # restart is picked up on the next tick
-                sys.stderr.write("picchio monitor: probe {} could not reach "
+                sys.stderr.write("picchio guard: probe {} could not reach "
                                  "the engine: {}\n".format(i, e))
                 if not _monitor_wait(t0, every, deadline):
                     break
@@ -3648,13 +3743,13 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
                 if len(healthy) >= MON_WARMUP:
                     baseline = statistics.median(healthy)
                     sys.stderr.write(
-                        "picchio monitor: baseline locked at {:.0f}x "
+                        "picchio guard: baseline locked at {:.0f}x "
                         "prefill/decode for this engine; a collapse from "
                         "it now flags too\n".format(baseline))
             if state in ("OK", "FLAG"):
                 if last_decisive and state != last_decisive:
                     sys.stderr.write(colorize(
-                        "picchio monitor: placement changed {} -> {} at "
+                        "picchio guard: placement changed {} -> {} at "
                         "probe {}".format(MON_TAG[last_decisive],
                                           MON_TAG[state], i),
                         sys.stderr) + "\n")
@@ -3667,7 +3762,7 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
     sys.stderr.write(colorize(monitor_summary_line(summ), sys.stderr) + "\n")
     res = residency_verdict(timeline, res_bytes, mode) if residency else None
     if res:
-        sys.stderr.write(colorize("picchio monitor: {} - {} of {} on disk. "
+        sys.stderr.write(colorize("picchio guard: {} - {} of {} on disk. "
                                   "{}".format(
                                       res[0], human_size(res[1]) if res[1]
                                       else "n/a",
@@ -3675,7 +3770,7 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
                                       else "n/a", res[2]),
                                   sys.stderr) + "\n")
     elif residency:
-        sys.stderr.write("picchio monitor: residency lane got fewer than {} "
+        sys.stderr.write("picchio guard: residency lane got fewer than {} "
                          "readings; nothing to say.\n".format(RES_MIN_PROBES))
     if as_json:
         print(json.dumps(monitor_json(
@@ -3687,7 +3782,7 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
 
 def monitor_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio monitor TARGET [--every SEC] [--for SEC] "
+        print("usage: picchio guard TARGET [--every SEC] [--for SEC] "
               "[--residency] [--json] [--keep-logs DIR]\n"
               "probe a running engine on an interval and flag any probe\n"
               "whose prefill/decode ratio collapses from that engine's own\n"
@@ -3719,16 +3814,16 @@ def monitor_cli(argv):
         elif not a.startswith("-") and target is None:
             target, i = a, i + 1
         else:
-            sys.exit("picchio monitor: unexpected argument {!r}.\nusage: "
-                     "picchio monitor TARGET [--every SEC] [--for SEC] "
+            sys.exit("picchio guard: unexpected argument {!r}.\nusage: "
+                     "picchio guard TARGET [--every SEC] [--for SEC] "
                      "[--json] [--keep-logs DIR]".format(a))
     if target is None:
-        sys.exit("picchio monitor: give a llama-server url or an ollama tag, "
-                 "e.g. picchio monitor http://127.0.0.1:8080  or  "
-                 "picchio monitor qwen3.5:9b")
+        sys.exit("picchio guard: give a llama-server url or an ollama tag, "
+                 "e.g. picchio guard http://127.0.0.1:8080  or  "
+                 "picchio guard qwen3.5:9b")
     mode = monitor_target_mode(target)
     if mode is None:
-        sys.exit("picchio monitor: {!r} looks like a file; monitor watches a "
+        sys.exit("picchio guard: {!r} looks like a file; guard watches a "
                  "running server. Give a url (http://host:port) or an ollama "
                  "tag.".format(target))
     monitor(target, mode, every, dur, keep, as_json, residency)
@@ -5197,9 +5292,9 @@ def selftest():
     if rb and os_residency_witness(rb) \
             and verify_block(rb)[0] == "PASS":
         ve_ok += 1
-    # watch: five required synthetic paths through the stable JSON contract
+    # guard process mode: six synthetic paths through the stable JSON contract
     # and the real machine-level judge (no gpu needed, ci safe)
-    wa_ok, wa_all = 0, 5
+    wa_ok, wa_all = 0, 6
 
     def synth_watch(dev_seq, mem, watt):
         return [{"t": i * 0.25, "dev": d, "mem": mem, "gpu_w": watt}
@@ -5239,6 +5334,17 @@ def selftest():
     if watch_json(target, watch_busy, sb, 0, 0, 1,
                   "interrupted")["stopReason"] == "interrupted":
         wa_ok += 1
+    # 6: Ollama's model-specific split outranks an ambiguous whole-GPU
+    # meter and gives partial offload its documented exit code.
+    partial = {"source": "ollama ps", "cpuPercent": 9,
+               "gpuPercent": 91, "contextLength": 262144}
+    sp, pp = watch_verdict(watch_busy, "ollama model qwen", partial)
+    jp = watch_json(target, watch_busy, sp, 3, 0, 2,
+                    "duration_elapsed", partial)
+    if sp == "PARTIAL OFFLOAD" and "9% CPU / 91% GPU" in pp \
+            and jp["exitCode"] == 3 \
+            and jp["enginePlacement"]["contextLength"] == 262144:
+        wa_ok += 1
     # monitor: the per probe signature classifier and the session summary,
     # both pure, so ci needs no live server
     mo_ok, mo_all = 0, 8
@@ -5277,7 +5383,7 @@ def selftest():
             and monitor_classify(300.0, 20.0, baseline=27.0)[0] == "WATCH":
         mo_ok += 1
     # target detection: an http url is a server, a bare tag is ollama, a
-    # file path is neither (monitor watches a running server, not a file)
+    # file path is neither (guard watches a running server, not a file)
     if monitor_target_mode("http://127.0.0.1:8080") == "server" \
             and monitor_target_mode("qwen3.5:9b") == "ollama" \
             and monitor_target_mode("/models/m.gguf") is None \
@@ -6518,17 +6624,15 @@ def main():
     if sys.argv[1:2] == ["guard"]:
         guard_cli(sys.argv[2:])
         return
+    if sys.argv[1:2] in (["watch"], ["monitor"]):
+        sys.exit("picchio: {0} is now picchio guard; run picchio guard --help "
+                 "(a PID, ollama, a url, a tag, or -- COMMAND).".format(
+                     sys.argv[1]))
     if sys.argv[1:2] == ["compare"]:
         compare_cli(sys.argv[2:])
         return
     if sys.argv[1:2] == ["verify"]:
         verify_cli(sys.argv[2:])
-        return
-    if sys.argv[1:2] == ["watch"]:
-        watch_cli(sys.argv[2:])
-        return
-    if sys.argv[1:2] == ["monitor"]:
-        monitor_cli(sys.argv[2:])
         return
     if sys.argv[1:2] == ["plan"]:
         plan_cli(sys.argv[2:])

@@ -232,16 +232,20 @@ def run_selftests(entry_argv):
     check("capabilities_exit_meanings",
           catalog["exitCodesByCommand"]["diagnose"]["3"] ==
           "partial offload" and
+          catalog["exitCodesByCommand"]["guard"]["3"] ==
+          "partial offload seen" and
           catalog["exitCodesByCommand"]["run"]["3"] ==
           "runtime failure" and
           "command-specific" in catalog["exitCodes"]["0"])
     rendered_help = command_help_epilog()
     check("human_help_focus",
           all(text in rendered_help for text in (
-              "picchio TARGET", "picchio guard", "picchio watch",
-              "picchio monitor", "picchio compare")) and
+              "picchio TARGET", "picchio guard -- COMMAND",
+              "picchio guard PID|ollama", "picchio guard URL|TAG",
+              "picchio compare")) and
           all(text not in rendered_help for text in (
-              "picchio verify", "picchio capabilities", "hash and inspect")))
+              "picchio watch", "picchio monitor", "picchio verify",
+              "picchio capabilities", "hash and inspect")))
 
     with tempfile.TemporaryDirectory(prefix="picchio-selftest-") as root:
         adapter_path = os.path.join(root, "fake_adapter.py")
@@ -571,7 +575,7 @@ def run_selftests(entry_argv):
                 namespace = "{http://www.w3.org/2000/svg}"
                 return [
                     "".join(node.itertext())
-                    for node in root.findall(namespace + "text")
+                    for node in root.iter(namespace + "text")
                     if first_y <= int(node.attrib.get("y", "0")) <= last_y
                 ]
 

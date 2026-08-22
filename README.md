@@ -21,12 +21,17 @@
 
 On the same Apple M5, with the same Qwen3.5-9B file:
 
-| | GPU | silent CPU fallback |
-|---|---:|---:|
-| layers on GPU | 33/33 | 0/33 |
-| prefill | 588.0 tok/s | 26.8 tok/s |
-| decode | 21.1 tok/s | 12.2 tok/s |
-| HTTP response | 200 | 200 |
+<table align="center">
+  <thead>
+    <tr><th></th><th align="right">GPU</th><th align="right">silent CPU fallback</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>layers on GPU</td><td align="right">33/33</td><td align="right">0/33</td></tr>
+    <tr><td>prefill</td><td align="right">588.0 tok/s</td><td align="right">26.8 tok/s</td></tr>
+    <tr><td>decode</td><td align="right">21.1 tok/s</td><td align="right">12.2 tok/s</td></tr>
+    <tr><td>HTTP response</td><td align="right">200</td><td align="right">200</td></tr>
+  </tbody>
+</table>
 
 The engine reported zero GPU layers. The operating system measured 0% GPU
 work. Prefill fell from 588.0 to 26.8 tok/s.

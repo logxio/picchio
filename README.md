@@ -98,10 +98,25 @@ I measured these with Picchio:
 | RTX 5090 | same file, llama.cpp CUDA | 33/33 | 9135.9 | 226.4 | 57.3 |
 | RTX 5090 | same file, llama.cpp Vulkan | 33/33 | 6206.3 | 198.4 | 51.0 |
 | RTX 5090 | qwen3.5:9b, Ollama | 100% GPU | 8614.7 | 193.5 | 153.9 |
+| RTX 4070 SUPER | same file, llama.cpp CUDA | 33/33 | 4187.8 | 78.2 | 28.9 |
 | your machine | | | | | |
 
 [Open every result](https://logxio.github.io/picchio/) or compare the outputs
 in [examples/](examples/).
+
+### The same 27B file on two cards
+
+Qwen3.8-27B is 15.32 GiB of weights. A 32 GB card holds all of it; a 12 GB
+card holds 38 of the 66 layers and runs the rest on the CPU.
+
+| card | placement | prefill | decode |
+|---|---|---:|---:|
+| RTX 5090, 32 GB | 66/66 | 3364.4 | 81.5 |
+| RTX 4070 SUPER, 12 GB | 38/66 | 504.1 | 5.7 |
+
+Same file, same quant, same engine. Decode differs by 14x, and Picchio says
+which of the two you are looking at: `memory fit: saw 11069 MiB free, gave
+38/66 layers`.
 
 ## What Picchio reads
 

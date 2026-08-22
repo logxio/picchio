@@ -1,0 +1,16 @@
+model    Qwen3.5-9B Q4_K_M, 8.95 B, 5.28 GiB, llama.cpp b0.2.0-dev
+gpu      ENGAGED: 33/33 layers on GPU (CUDA: GeForce RTX 4070 SUPER)
+os       gpu idle 0%, work 97%, mem +5.6 GiB, 114 W, 1.66 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold      4057.9 tok/s     78.0 tok/s     28.1 tok/s
+  warm mid  4187.8 tok/s     78.2 tok/s     28.9 tok/s
+  warm span    4183~4193      78.2~78.2      28.8~28.9
+where the cold pass went (4.5 s, 8/16 threads, weights cached)
+  load weights    1.8 s  ###########.................   40%
+  prefill         0.2 s  #...........................    4%
+  decode          1.6 s  ##########..................   36%
+  engine misc     0.9 s  #####.......................   19%
+VERDICT: HEALTHY. The GPU did the work. Quote the warm median
+  decode: 78.2 tok/s.
+-- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 4070 SUPER, 32 GB, Windows 10

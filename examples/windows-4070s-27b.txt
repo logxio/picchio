@@ -1,0 +1,16 @@
+model    Qwen3.8-27B Q4_K_M, 27.32 B, 15.32 GiB, llama.cpp b0.2.0-dev
+gpu      PARTIAL: 38/66 layers on GPU (CUDA: GeForce RTX 4070 SUPER)
+os       gpu idle 0%, work 30%, mem +9.7 GiB, 36.1 W, 6.18 J/tok
+settings temp 1.0, top-k 20, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold       425.3 tok/s      5.8 tok/s      1.7 tok/s
+  warm mid   504.1 tok/s      5.7 tok/s      4.0 tok/s
+  warm span      445~563        5.6~5.8        3.9~4.2
+where the cold pass went (73.6 s, 8/16 threads)
+  load weights   46.8 s  ##################..........   64%
+  prefill         1.8 s  #...........................    2%
+  decode         21.9 s  ########....................   30%
+  engine misc     3.0 s  #...........................    4%
+VERDICT: PARTIAL OFFLOAD. 28 layers sat on CPU.
+WHY: memory fit: saw 11069 MiB free, gave 38/66 layers
+-- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 4070 SUPER, 32 GB, Windows 10

@@ -28,13 +28,13 @@ COMMAND_GROUPS = (
 # agents while people could still find them by scrolling --help.
 COMMAND_CAPABILITIES = {
     "diagnose": {
-        "usage": "picchio [diagnose] TARGET [--json|--share row]",
+        "usage": "picchio [diagnose] TARGET [--json|--share bug-report]",
         "purpose": "measure one GGUF, Ollama tag or llama-server URL",
         "stdout": "picchio.diagnose.v1 with --json",
         "evidence": "--keep-logs DIR",
         "aliases": ["picchio TARGET"],
-        "options": ["--share line|row|post", "--ctx-sweep [LIST]",
-                    "--explain TOKS"],
+        "options": ["--share line|row|post|bug-report", "--ctx TOKENS",
+                    "--ctx-sweep [LIST]", "--explain TOKS"],
     },
     "run": {
         "usage": "picchio run MANIFEST [--artifact DIR]",
@@ -85,7 +85,8 @@ COMMAND_CAPABILITIES = {
         },
     },
     "share": {
-        "usage": "picchio share [BLOCK] [--line|--row|--post]",
+        "usage": "picchio share [BLOCK] "
+                 "[--line|--row|--post|--bug-report]",
         "purpose": "reformat one receipt without measuring again",
     },
     "verify": {

@@ -60,9 +60,10 @@ uses only the standard library.
 | catch CPU fallback and measure the run | `./picchio MODEL` |
 | guard something already running and get told the moment it leaves the GPU: your own command, a loaded model, a server | `./picchio guard -- COMMAND` · `./picchio guard ollama` · `./picchio guard http://127.0.0.1:8080` |
 | compare two runs and show the first changed setting | `./picchio compare before.txt after.txt` |
-| paste a compact result into an issue or post | `./picchio MODEL --share row` |
+| turn one run into a complete Ollama or llama.cpp Issue report | `./picchio MODEL --share bug-report` |
 
 Add `--json` when you want machine-readable output.
+Add `--ctx 262144` when the problem only appears at a larger context.
 
 ## What it gives you
 
@@ -71,6 +72,7 @@ Add `--json` when you want machine-readable output.
 - GPU activity, memory, power and energy per generated token
 - the first setting that changed when you compare two runs
 - a clear `HEALTHY`, `CPU FALLBACK` or `PARTIAL OFFLOAD` result
+- a paste-ready GitHub Issue with OS, driver, model SHA, GPU use and real rates
 
 ## Compare real machines
 

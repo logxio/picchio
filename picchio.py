@@ -41,7 +41,7 @@ from picchio_core import gpu_meters  # noqa: E402  (needs the path above)
 # stays here is the wiring that reaches the gguf walk and the cache.
 from picchio_core.share import (  # noqa: E402
     SHARE_COLUMNS, SHARE_URL, render_share, share_line, share_missing,
-    share_post, share_row)
+    share_bug_report, share_post, share_row)
 from picchio_core.vet import (  # noqa: E402
     VET_NOTES, vet_cli, vet_quant_note, vet_rate_lane, vet_scan)
 
@@ -1526,11 +1526,11 @@ def placement_flags(argv):
     return out
 
 
-def effective_ctx(extra):
+def effective_ctx(extra, default=CTX):
     """The ctx the engine actually got: the protocol default unless the
     passthrough args override it (llama.cpp honors the last -c given;
     picchio's own -c comes first on the command line)."""
-    ctx = CTX
+    ctx = default
     for i, tok in enumerate(extra):
         if tok.startswith(("-c=", "--ctx-size=")):
             tok, val = tok.split("=", 1)
@@ -4862,9 +4862,21 @@ def share_identity(model, emit=None):
            or (show.get("details") or {}).get("quantization_level"),
            "mode": "ollama"}
     if ollama_host_is_local():
-        digest, nbytes = file_fingerprint(ollama_model_path(model), emit)
-        if digest:
-            out["sha256"], out["bytes"] = digest, nbytes
+        model_path = ollama_model_path(model)
+        # Ollama's content-addressed blob name already is the full model
+        # SHA-256. Re-reading a 20+ GiB model to rediscover the filename
+        # makes a one-command bug report needlessly slow.
+        match = re.search(r"sha256-([0-9a-f]{64})$", model_path or "")
+        if match:
+            out["sha256"] = match.group(1)
+            try:
+                out["bytes"] = os.path.getsize(model_path)
+            except OSError:
+                pass
+        else:
+            digest, nbytes = file_fingerprint(model_path, emit)
+            if digest:
+                out["sha256"], out["bytes"] = digest, nbytes
     try:
         _h, elems, total = id_account(ollama_tensor_table(
             show.get("tensors") or []))
@@ -4874,12 +4886,13 @@ def share_identity(model, emit=None):
     return out
 
 
-def share_facts(b, model=None, emit=None):
+def share_facts(b, model=None, emit=None, environment=None):
     """Every field the three formats print, gathered once so they
     cannot disagree with each other. The block supplies what a run
     measured; the model file supplies what a file is. Anything neither
     can answer is n/a, which is a reading, not a blank."""
     ident = share_identity(model, emit)
+    environment = environment or {}
     kv = None
     if model and ident.get("mode"):
         rec = cache_for_measurement(
@@ -4899,6 +4912,9 @@ def share_facts(b, model=None, emit=None):
         "engine": b.get("engine"),
         "machine": "{}, {} GB".format(b["chip"], b["ram"])
         if b.get("chip") else None,
+        "os": environment.get("os") or b.get("os"),
+        "gpu": environment.get("gpu"),
+        "driver": environment.get("driver"),
         "ctx": b.get("ctx"),
         "kv": kv,
         "settings": b.get("settings"),
@@ -4926,11 +4942,11 @@ def warn_share_missing(facts, model):
 def share_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
         print("usage: picchio share [BLOCK] [--model MODEL]\n"
-              "                        [--line | --row | --post]\n"
+              "              [--line | --row | --post | --bug-report]\n"
               "reformat a verdict block you already have into something\n"
               "postable. --line is one line for a comment, --row is a\n"
-              "markdown table row, --post is a full post skeleton with\n"
-              "the specs filled in and the opinion left blank. BLOCK is\n"
+              "markdown table row, --post is a full post skeleton and\n"
+              "--bug-report is a GitHub-ready runtime report. BLOCK is\n"
               "a saved block or stdin. --model points at the .gguf or\n"
               "ollama tag the block measured, which adds the effective\n"
               "bits per weight, the file identity and the kv dtype; the\n"
@@ -4941,7 +4957,7 @@ def share_cli(argv):
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--line", "--row", "--post"):
+        if a in ("--line", "--row", "--post", "--bug-report"):
             mode = a[2:]
         elif a == "--model" and i + 1 < len(argv):
             i += 1
@@ -6161,10 +6177,10 @@ def selftest():
             and energy_per_token(ensum, {"decode_toks": None}) is None \
             and energy_per_token({"off": "disabled"}, enrep) is None:
         en_ok += 1
-    # share: the three postable shapes. All of it is reformatting, so
+    # share: the postable shapes. All of it is reformatting, so
     # the group is about the reformatting never inventing or losing a
     # value the block did not already carry.
-    sh_ok, sh_all = 0, 5
+    sh_ok, sh_all = 0, 6
     shb = parse_block(ha)
     shf = share_facts(shb)
     # 1: same source, same value. Every field the one line form prints
@@ -6204,7 +6220,18 @@ def selftest():
             and "your take goes here" in post \
             and "```text" in post and SHARE_URL in post:
         sh_ok += 1
-    # 5: a walked file supplies exactly the three fields the block
+    # 5: the bug report leads with the verdict and carries the exact
+    #    upstream reproduction fields plus the unmodified source block.
+    bug_facts = dict(shf, os="macOS 26.5.1", gpu="Apple M5",
+                     driver="Metal (macOS 26.5.1)", sha256="a" * 64)
+    bug = share_bug_report(bug_facts, ha)
+    if all(value in bug for value in (
+            "## Picchio runtime report", "**HEALTHY**", "macOS 26.5.1",
+            "Apple M5", "`" + "a" * 64 + "`", "gpu idle",
+            "588.0 tok/s", "21.1 tok/s", "<details>", SHARE_URL)) \
+            and all(line in bug for line in ha.rstrip().splitlines()):
+        sh_ok += 1
+    # 6: a walked file supplies exactly the three fields the block
     #    cannot carry, and the quant it walked wins over the one
     #    guessed from a filename
     shimg = synth_id_img([("blk.0.attn_q.weight", (256, 4), 12)], [])
@@ -6662,6 +6689,8 @@ def main():
                     version="picchio {}".format(VERSION))
     ap.add_argument("--bin", help="llama.cpp binary (default: find "
                                   "llama-completion or llama-cli on PATH)")
+    ap.add_argument("--ctx", type=int, default=CTX, metavar="TOKENS",
+                    help="context window for this run (default: 4096)")
     ap.add_argument("--passes", type=int, default=3, metavar="N",
                     help=argparse.SUPPRESS)
     ap.add_argument("--explain", type=float, metavar="TOKS",
@@ -6669,10 +6698,11 @@ def main():
     ap.add_argument("--json", action="store_true",
                     help="write only JSON to stdout; human verdict goes to "
                          "stderr")
-    ap.add_argument("--share", choices=("line", "row", "post"),
+    ap.add_argument("--share",
+                    choices=("line", "row", "post", "bug-report"),
                     help="after measuring, write a postable line, Markdown "
-                         "row or post to stdout; the full result stays on "
-                         "stderr")
+                         "row, post or upstream bug report to stdout; the "
+                         "full result stays on stderr")
     ap.add_argument("--keep-logs", metavar="DIR",
                     help=argparse.SUPPRESS)
     ap.add_argument("--no-telemetry", action="store_true",
@@ -6691,11 +6721,16 @@ def main():
     if args.selftest:
         selftest()
         return
+    if args.ctx < 1:
+        sys.exit("picchio: --ctx must be a positive number of tokens.")
     if args.json and args.share:
         sys.exit("picchio: --json and --share both own stdout; choose one.")
     if args.ctx_sweep is not None and args.share:
         sys.exit("picchio: --share formats an mp1 verdict, while --ctx-sweep "
                  "prints a multi-context table; choose one.")
+    if args.ctx_sweep is not None and args.ctx != CTX:
+        sys.exit("picchio: --ctx and --ctx-sweep both set context; choose "
+                 "one.")
 
     if args.model is None and args.explain is not None:
         cached = load_cache()
@@ -6748,6 +6783,9 @@ def main():
     if mode != "llama.cpp" and args.extra:
         sys.exit("picchio: passthrough args after -- only work in "
                  "llama.cpp mode.")
+    if mode == "server" and args.ctx != CTX:
+        sys.exit("picchio: --ctx cannot resize a running llama-server; "
+                 "set its context when you launch the server.")
 
     if args.ctx_sweep is not None:
         if mode == "server":
@@ -6780,8 +6818,9 @@ def main():
             sampler["ev"] = "timing"
     if isinstance(sampler, GpuSampler):
         time.sleep(1.2)  # a few ticks of idle baseline before pass 1
-    block_ctx = server_ctx(binpath) if mode == "server" \
-        else effective_ctx(args.extra)
+    block_ctx = server_ctx(binpath) if mode == "server" else \
+        (effective_ctx(args.extra, args.ctx)
+         if mode == "llama.cpp" else args.ctx)
     for i in range(args.passes):
         if i > 0:
             note = " (warm)"
@@ -6795,7 +6834,7 @@ def main():
         if mode == "llama.cpp":
             p = run_llama_pass(binpath, args.model, args.extra,
                                lp("pass{}.stderr.txt".format(i + 1)),
-                               prompt=prompt)
+                               prompt=prompt, ctx=args.ctx)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "extra_args": args.extra,
                     "prompt_nonce": nonce}
@@ -6809,7 +6848,7 @@ def main():
         else:
             p, ps = run_ollama_pass(
                 args.model, lp("pass{}.response.json".format(i + 1)),
-                prompt=prompt)
+                prompt=prompt, ctx=args.ctx)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "ps": ps,
                     "prompt_nonce": nonce}
@@ -6895,7 +6934,13 @@ def main():
                           "evidenceDirectory": os.path.abspath(logdir)
                           if logdir else None}, indent=1))
     elif args.share:
-        facts = share_facts(parse_block(block), args.model, sys.stderr.write)
+        gpu_name = gpu_meters.machine_gpu_name()
+        if platform.system() == "Darwin":
+            gpu_name = mach.get("chip")
+        facts = share_facts(
+            parse_block(block), args.model, sys.stderr.write,
+            {"os": mach.get("os"), "gpu": gpu_name,
+             "driver": gpu_meters.machine_gpu_driver()})
         print(render_share(facts, block, args.share))
         warn_share_missing(facts, args.model)
 

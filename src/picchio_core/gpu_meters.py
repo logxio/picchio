@@ -439,3 +439,36 @@ def machine_gpu_name():
         if name:
             return name
     return None
+
+
+def machine_gpu_driver():
+    """The installed GPU driver/backend label for a pasteable bug report.
+
+    This is presentation only. Failure to read a version returns None and
+    never changes telemetry or a placement verdict.
+    """
+    sysname = platform.system()
+    if sysname == "Darwin":
+        version = platform.mac_ver()[0]
+        return "Metal (macOS {})".format(version) if version else "Metal"
+    if sysname in ("Linux", "Windows"):
+        try:
+            meter = _NVML()
+            fn = getattr(meter.lib, "nvmlSystemGetDriverVersion", None)
+            if fn:
+                buf = ctypes.create_string_buffer(96)
+                if fn(buf, 96) == 0:
+                    version = buf.value.decode(errors="replace").strip()
+                    if version:
+                        return "NVIDIA {} (NVML)".format(version)
+        except Exception:
+            pass
+    if sysname == "Linux":
+        try:
+            _AMDGPU()
+        except Exception:
+            return None
+        version = _cmd_out(["modinfo", "-F", "version", "amdgpu"]).strip()
+        return "amdgpu {}".format(version or "(Linux {})".format(
+            platform.release()))
+    return None

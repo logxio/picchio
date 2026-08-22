@@ -228,7 +228,9 @@ def run_selftests(entry_argv):
     }
     check("capabilities_complete",
           mapped_commands == set(COMMAND_CAPABILITIES) - {"capabilities"} and
-          set(catalog["commands"]) == set(COMMAND_CAPABILITIES))
+          set(catalog["commands"]) == set(COMMAND_CAPABILITIES) and
+          "--share line|row|post|bug-report" in
+          catalog["commands"]["diagnose"]["options"])
     check("capabilities_exit_meanings",
           catalog["exitCodesByCommand"]["diagnose"]["3"] ==
           "partial offload" and

@@ -96,7 +96,6 @@ def quant_record(filename, family, publisher):
         "family": family,
         "publisher": publisher,
         "file": name.group(1),
-        "sha256": identity.group(1),
         "bytes": _number(identity.group(2)),
         "claimed": claimed.group(1),
         "tensors": int(walked.group(1)),

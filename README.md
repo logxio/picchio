@@ -2,7 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>picchio proves what produced the tok/s</h1>
+<h1>picchio shows what produced your tok/s</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -16,9 +16,9 @@
 
 </div>
 
-Picchio measures local LLMs and writes one reproducible receipt with the
-model, engine settings, GPU placement, prefill, decode, wall-clock
-throughput, memory, power and optional full-file SHA-256.
+I built Picchio to show what actually produced a local LLM number. It
+measures the run and leaves one receipt with the model, engine settings,
+GPU placement, prefill, decode, wall-clock throughput, memory and power.
 
 - The same model and file measured **588.0 tok/s prefill and 21.1 tok/s
   decode on GPU**, but **26.8 and 12.2 on CPU**. Losing the GPU cost
@@ -26,12 +26,12 @@ throughput, memory, power and optional full-file SHA-256.
 - Nine files from three model families carrying the `Q4_K_M` label
   measured **4.82 to 5.55 bits per weight**. Four 9B files alone
   measured 5.02, 5.02, 5.07 and 5.27 over their shared tensors.
-- A completed run can still be a CPU run. Picchio checks the engine's
-  placement report against the operating system's GPU meter before it
-  calls a result healthy.
+- My forced-CPU run completed every request with 0/33 layers on the GPU.
+  Picchio caught it by checking the engine's placement report against the
+  operating system's GPU meter.
 
-[Open the Receipt Explorer](https://logxio.github.io/picchio/). Run Picchio,
-star the repository and [add your receipt](#add-your-machine).
+[Browse the receipts](https://logxio.github.io/picchio/). If Picchio catches
+something on your machine, star the repository and [send me the receipt](#add-your-machine).
 
 ## Install
 
@@ -41,10 +41,10 @@ chmod +x picchio
 ./picchio
 ```
 
-With no arguments, Picchio finds Ollama tags, local GGUF files and models
-in the Hugging Face and LM Studio caches, then measures the selected model.
-One executable file; Python 3.9+ standard library; llama.cpp or Ollama;
-macOS or Linux.
+Run it with no arguments and it finds Ollama tags, local GGUF files and
+models in the Hugging Face and LM Studio caches, then lets you pick one.
+Picchio is one Python 3.9+ file, uses only the standard library, works with
+llama.cpp or Ollama, and runs on macOS and Linux.
 
 ## Commands: four jobs, one receipt
 
@@ -58,11 +58,11 @@ macOS or Linux.
 ./picchio model.gguf --share row
 ```
 
-A GGUF path runs llama.cpp. An Ollama tag measures local Ollama. A URL
-measures a running llama-server. `diagnose --json` writes machine output
-to stdout and the verdict to stderr. `--share line|row|post` writes a
-ready-to-paste artifact and adds SHA-256 plus effective bits per weight
-for a local file.
+Give it a GGUF path and it runs llama.cpp. Give it an Ollama tag and it
+measures local Ollama. Give it a URL and it measures that running
+llama-server. `diagnose --json` writes JSON to stdout and the verdict to
+stderr. `--share line|row|post` writes a ready-to-paste result; for a local
+file it also adds the tensor mix and effective bits per weight.
 
 Real receipts: [llama.cpp on Metal](examples/healthy-metal.txt) ·
 [Ollama](examples/ollama-qwen35.txt) ·
@@ -76,9 +76,9 @@ Real receipts: [llama.cpp on Metal](examples/healthy-metal.txt) ·
 ./picchio plan model.gguf
 ```
 
-`id` hashes every byte and reports the GGUF tensor mix, effective bits per
-weight and stored origin claims. `plan` reports fit before a run and adds
-a decode estimate after a measurement exists.
+`id` reports the GGUF tensor mix, effective bits per weight and stored
+origin claims. `plan` tells you whether the model fits;
+after the first measurement, it also estimates decode speed.
 
 Real cards: [MoE identity](examples/id-35b.txt) ·
 [four Q4_K_M files](examples/quantizers/) ·
@@ -110,24 +110,25 @@ Real sessions: [guard](examples/guard-ngl0.txt) ·
 ./picchio compare before.txt after.txt
 ```
 
-`share` emits a comment line, Markdown row or post skeleton. `--model`
-adds SHA-256 and bits per weight. `verify` checks contradictions.
-`compare` reports the first configuration difference before the rates.
+`share` turns a receipt into a comment line, Markdown row or post skeleton.
+`--model` adds the model details and bits per weight. `verify` checks the
+receipt for contradictions. `compare` shows the first configuration
+difference before it compares the rates.
 
 Real outputs: [three share formats](examples/share-modes.txt) ·
 [forged block check](examples/verify-forged.txt) ·
 [comparison](examples/compare.txt)
 
-Context sweeps, cached-rate classification, post audits, resumable suites
-and agent traces remain available through `./picchio --help`. The long-run
-manifest and artifact contract lives in [docs/run-manifests.md](docs/run-manifests.md).
+For context sweeps, cached-rate checks, post audits, resumable suites and
+agent traces, run `./picchio --help`. The long-run artifact format is in
+[docs/run-manifests.md](docs/run-manifests.md).
 
 ## Evidence in every receipt
 
-### File identity
+### Inside the GGUF
 
-`./picchio id` reports full SHA-256, exact byte count, every tensor's ggml
-type and effective bits per weight.
+`./picchio id` reports every tensor's ggml type, the total weight count and
+the effective bits per weight.
 
 Across the four Qwen3.5-9B files in this repository, one file also bundles
 a 243M-parameter MTP head at q8_0 while another publishes that head
@@ -185,14 +186,14 @@ live in [examples/](examples/) and [examples/raw/](examples/raw/).
 | RTX 5090, Linux | Qwen3.8-27B UD-Q4, llama.cpp b0.2.0 | mp1      |  3364.4 |   81.5 |      25.3 | HEALTHY             |
 | your machine    |                                     |          |         |        |           |                     |
 
-The RTX 5090 ran the same 9B through
+I ran the same 9B on the RTX 5090 through
 [CUDA](examples/linux-5090-cuda.txt),
 [Vulkan](examples/linux-5090-vulkan-nonce.txt) and
 [Ollama](examples/linux-5090-ollama-nonce.txt). The 27B run filled the
 card at 15.8 GiB resident and 343 W
-([receipt](examples/linux-5090-27b.txt)). The 35B Apple run shows the
-other shape: a 3B-active mixture-of-experts model whose first pass is
-mostly the cost of reading 20.6 GiB of weights
+([receipt](examples/linux-5090-27b.txt)). On the M5, the 35B
+mixture-of-experts model activates about 3B weights per token, while its
+first pass still reads the 20.6 GiB file
 ([llama.cpp](examples/id-35b.txt) · [Ollama](examples/ollama-35b.txt)).
 
 ## Add your machine
@@ -204,8 +205,8 @@ mostly the cost of reading 20.6 GiB of weights
 - [Submit a verdict](https://github.com/logxio/picchio/issues/new?template=verdict-report.md)
 - [Report a wrong verdict](https://github.com/logxio/picchio/issues/new?template=misdiagnosis-report.md)
 
-Paste the complete 16-line receipt. Attach `--keep-logs` output for an
-unexpected result.
+Paste the complete 16-line receipt. If Picchio gets the verdict wrong,
+attach the `--keep-logs` output too—I want that report first.
 
 ## Evidence coverage
 
@@ -213,13 +214,12 @@ unexpected result.
   `watch` adds OS-side placement evidence for MLX, LM Studio and other
   running processes.
 - The repository carries real Apple Silicon, NVIDIA CUDA and NVIDIA
-  Vulkan receipts. AMD Linux uses the amdgpu sysfs meter; community
-  Radeon receipts extend that calibration set.
+  Vulkan receipts. On AMD Linux, Picchio reads the amdgpu sysfs meter.
 - llama.cpp contributes per-layer placement and applied sampler settings.
   Ollama contributes its CPU/GPU weight-memory split. Every receipt names
   the source beside the field.
-- A judged run begins from an idle GPU. The receipt prints the pre-run
-  utilization and power reading that admitted or disqualified the sample.
+- Before judging a run, Picchio checks that the GPU is idle. The receipt
+  prints the utilization and power reading it saw before pass one.
 - A remote llama-server keeps engine-reported prefill and decode counters
   while wall-clock throughput includes the network path.
 
@@ -231,11 +231,10 @@ unexpected result.
 ./picchio --help
 ```
 
-The repository self-test replays the raw logs behind committed receipts
-and must reproduce their verdict blocks line for line. `--json` emits
-stable machine output where supported. Exit codes distinguish healthy,
-could not run, partial offload, CPU fallback and conflicting evidence;
-`./picchio --help` is the current command and exit-code contract.
+The self-test replays the raw logs behind every committed receipt and
+reproduces each verdict block line for line. Commands with `--json` write
+stable machine output. Exit codes separate healthy runs, runs that could
+not start, partial offload, CPU fallback and conflicting evidence.
 
 Picchio writes one cache file under `~/.cache/picchio`. Measurement logs
 are written only when you request `--keep-logs DIR`.

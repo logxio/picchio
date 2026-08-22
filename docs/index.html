@@ -122,8 +122,8 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Model</th><th>Publisher</th><th>Claimed</th><th class="num">Bpw</th><th class="num">Weights</th><th class="num">Tensors</th><th class="num">Types</th><th>SHA-256</th></tr></thead>
-            <tbody id="quantizer-rows"><tr><td colspan="8">Loading tensor cards…</td></tr></tbody>
+            <thead><tr><th>Model</th><th>Publisher</th><th>Claimed</th><th class="num">Bpw</th><th class="num">Weights</th><th class="num">Tensors</th><th class="num">Types</th></tr></thead>
+            <tbody id="quantizer-rows"><tr><td colspan="7">Loading tensor cards…</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -174,7 +174,7 @@ chmod +x picchio
     function renderQuantizers() {
       const family = document.querySelector("#family").value;
       const rows = data.quantizers.filter(row => !family || row.family === family).sort((a, b) => a.family.localeCompare(b.family) || a.bitsPerWeight - b.bitsPerWeight);
-      document.querySelector("#quantizer-rows").innerHTML = rows.map(row => `<tr><td><a class="receipt" href="${esc(row.card)}">${esc(row.family)}</a></td><td>${esc(row.publisher)}</td><td>${esc(row.claimed)}</td><td class="num">${row.bitsPerWeight.toFixed(2)}</td><td class="num">${compact(row.weights)}</td><td class="num">${row.tensors}</td><td class="num">${row.types}</td><td>${esc(row.sha256)}…</td></tr>`).join("");
+      document.querySelector("#quantizer-rows").innerHTML = rows.map(row => `<tr><td><a class="receipt" href="${esc(row.card)}">${esc(row.family)}</a></td><td>${esc(row.publisher)}</td><td>${esc(row.claimed)}</td><td class="num">${row.bitsPerWeight.toFixed(2)}</td><td class="num">${compact(row.weights)}</td><td class="num">${row.tensors}</td><td class="num">${row.types}</td></tr>`).join("");
     }
 
     fetch("./receipts.json").then(response => {
@@ -189,7 +189,7 @@ chmod +x picchio
       renderQuantizers();
     }).catch(error => {
       document.querySelector("#benchmark-rows").innerHTML = `<tr><td colspan="9">Could not load receipts: ${esc(error.message)}</td></tr>`;
-      document.querySelector("#quantizer-rows").innerHTML = '<tr><td colspan="8">Open the repository for the committed tensor cards.</td></tr>';
+      document.querySelector("#quantizer-rows").innerHTML = '<tr><td colspan="7">Open the repository for the committed tensor cards.</td></tr>';
     });
 
     ["machine", "model"].forEach(id => document.querySelector(`#${id}`).addEventListener("change", renderBenchmarks));

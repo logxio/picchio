@@ -2,7 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>Qwen3.8-27B ran 14× slower when 28 layers spilled to the CPU</h1>
+<h1>Catch local LLMs spilling into the CPU</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -10,27 +10,11 @@
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse real results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
+<p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<img src="assets/picchio-demo.svg" width="680" alt="Qwen3.8-27B returns HTTP 200 while Picchio catches 28 of 66 layers running on the CPU and a 14 times decode slowdown">
+<img src="assets/picchio-demo.svg" width="680" alt="Qwen3.8-27B completes while Picchio catches 28 of 66 layers running on the CPU and a 14 times decode slowdown">
 
 </div>
-
-**The same Qwen3.8-27B file returned HTTP 200 on both cards: 66/66 GPU layers
-and 81.5 tok/s on 32 GB; 38/66 and 5.7 tok/s on 12 GB.**
-
-<table align="center">
-  <thead>
-    <tr><th>card</th><th align="right">layers on GPU</th><th align="right">decode</th></tr>
-  </thead>
-  <tbody>
-    <tr><td>RTX 5090, 32 GB</td><td align="right">66/66</td><td align="right">81.5 tok/s</td></tr>
-    <tr><td>RTX 4070 SUPER, 12 GB</td><td align="right">38/66</td><td align="right">5.7 tok/s</td></tr>
-  </tbody>
-</table>
-
-Picchio printed `PARTIAL OFFLOAD. 28 layers sat on CPU` and
-`memory fit: saw 11069 MiB free, gave 38/66 layers`.
 
 ## Run it
 
@@ -80,9 +64,9 @@ Add `--ctx 262144` when the problem only appears at a larger context.
 - GPU activity, memory, power and energy per generated token
 - the first setting that changed when you compare two runs
 - a clear `HEALTHY`, `CPU FALLBACK` or `PARTIAL OFFLOAD` result
-- a paste-ready GitHub Issue with OS, driver, model SHA, GPU use and real rates
+- a paste-ready GitHub Issue with your machine, model, GPU placement and measured rates
 
-## Compare real machines
+## Compare machines
 
 I measured these with Picchio:
 
@@ -106,7 +90,7 @@ in [examples/](examples/).
 - Ollama: CPU/GPU weight split and timing
 - macOS: Apple GPU activity, memory, power and energy per token
 - NVIDIA on Linux and Windows: GPU activity, memory, power and energy per token through NVML
-- AMD Linux: GPU activity and memory through amdgpu sysfs. **AMD readings are reference-only for now. I am looking for real Radeon runs from the community; an AMD verdict block is the contribution I want most.**
+- AMD Linux: GPU activity and memory through amdgpu sysfs. **AMD readings are reference-only, and I want results from real Radeon hardware.**
 
 Point Picchio at a GGUF path, an Ollama tag or a running llama-server URL.
 The result tells you where the model ran and which number is safe to compare.

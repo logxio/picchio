@@ -32,20 +32,16 @@
   </g>
 
   <text x="70" y="72" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="5">PICCHIO</text>
-  <text x="70" y="158" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="45" font-weight="700">Ollama returned 200 OK with 9% of a 35B on CPU</text>
+  <text x="70" y="158" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="700">Qwen3.8-27B ran 14.3× slower</text>
 
-  <rect x="70" y="218" width="470" height="210" rx="12" fill="#161b22" stroke="#30363d" stroke-width="2"/>
-  <text x="106" y="268" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">OLLAMA · QWEN3.6-35B-A3B</text>
-  <text x="106" y="337" fill="#3fb950" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="38" font-weight="700">HTTP 200 OK</text>
-  <text x="106" y="388" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22">ctx 262144</text>
+  <rect x="70" y="218" width="540" height="300" rx="12" fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="106" y="274" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22">RTX 5090 · 32 GB</text>
+  <text x="106" y="360" fill="#3fb950" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="46" font-weight="700">66/66 GPU</text>
+  <text x="106" y="438" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="42" font-weight="700">81.5 tok/s</text>
 
-  <rect x="570" y="218" width="640" height="210" rx="12" fill="#161b22" stroke="#e5484d" stroke-width="2"/>
-  <text x="606" y="268" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20" font-weight="700">PICCHIO · PARTIAL OFFLOAD</text>
-  <text x="606" y="337" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="38" font-weight="700">9% CPU</text>
-  <text x="798" y="337" fill="#8b949e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="38">·</text>
-  <text x="840" y="337" fill="#3fb950" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="38" font-weight="700">91% GPU</text>
-  <text x="606" y="388" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22">caught in 2 seconds</text>
-
-  <rect x="70" y="478" width="1140" height="96" rx="12" fill="#161b22"/>
-  <text x="106" y="538" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="29"><tspan fill="#8b949e">$ </tspan>./picchio guard ollama --for 2</text>
+  <rect x="640" y="218" width="570" height="300" rx="12" fill="#1a1214" stroke="#e5484d" stroke-width="3"/>
+  <text x="676" y="274" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="700">RTX 4070 SUPER · 12 GB</text>
+  <text x="676" y="350" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="46" font-weight="700">38/66 GPU</text>
+  <text x="676" y="414" fill="#f0f6fc" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="42" font-weight="700">5.7 tok/s</text>
+  <text x="676" y="468" fill="#e5484d" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="25">28 layers on CPU</text>
 </svg>

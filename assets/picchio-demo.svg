@@ -8,33 +8,26 @@
     <animate attributeName="visibility" dur="12s" repeatCount="indefinite" calcMode="discrete" values="visible;hidden;visible" keyTimes="0;.32;1"/>
     <text x="28" y="72" fill="#e6edf3" font-size="14">$ Qwen3.8-27B on RTX 4070 SUPER 12 GB</text>
     <rect x="28" y="100" width="337" height="250" rx="8" fill="#101820" stroke="#30363d"/>
-    <text x="50" y="140" fill="#8b949e" font-size="13">LOCAL LLM SERVER</text>
-    <text x="50" y="188" fill="#3fb950" font-size="21" font-weight="700">HTTP 200 OK</text>
-    <text x="50" y="230" fill="#e6edf3" font-size="14">response: "Hello"</text>
-    <text x="50" y="270" fill="#8b949e" font-size="13">request completed</text>
+    <text x="50" y="140" fill="#8b949e" font-size="13">LLAMA.CPP</text>
+    <text x="50" y="188" fill="#3fb950" font-size="21" font-weight="700">RUN COMPLETED</text>
+    <text x="50" y="230" fill="#e6edf3" font-size="14">generated text</text>
+    <text x="50" y="270" fill="#8b949e" font-size="13">no error returned</text>
 
     <rect x="395" y="100" width="337" height="250" rx="8" fill="#1a1214" stroke="#da3633" stroke-width="2"/>
     <text x="417" y="140" fill="#f85149" font-size="13" font-weight="700">PICCHIO</text>
     <text x="417" y="184" fill="#f85149" font-size="19" font-weight="700">PARTIAL OFFLOAD</text>
-    <text x="417" y="230" fill="#e6edf3" font-size="17" font-weight="700">38/66 layers on GPU</text>
-    <text x="417" y="272" fill="#f85149" font-size="17" font-weight="700">28 layers on CPU</text>
-    <text x="28" y="395" fill="#e6edf3" font-size="17" font-weight="700">The request worked.</text>
-    <text x="236" y="395" fill="#f85149" font-size="17" font-weight="700">Decode fell to 5.7 tok/s.</text>
+    <text x="417" y="238" fill="#f85149" font-size="17" font-weight="700">28 of 66 layers on CPU</text>
+    <text x="28" y="395" fill="#f85149" font-size="17" font-weight="700">Decode ran 14.3× slower.</text>
   </g>
 
   <g visibility="hidden">
     <animate attributeName="visibility" dur="12s" repeatCount="indefinite" calcMode="discrete" values="hidden;visible;hidden;hidden" keyTimes="0;.32;.65;1"/>
-    <text x="28" y="72" fill="#f85149" font-size="20" font-weight="700">SAME 27B FILE. 14.3× DECODE GAP.</text>
+    <text x="28" y="72" fill="#f85149" font-size="20" font-weight="700">SAME 27B FILE. TWO CARDS.</text>
     <rect x="28" y="104" width="704" height="246" rx="8" fill="#101820"/>
-    <text x="52" y="142" fill="#3fb950" font-size="13">RTX 5090</text>
-    <text x="210" y="142" fill="#e6edf3" font-size="15">32 GB · 66/66 GPU · 81.5 tok/s</text>
-    <text x="52" y="190" fill="#f85149" font-size="13">RTX 4070S</text>
-    <text x="210" y="190" fill="#f85149" font-size="15" font-weight="700">12 GB · 38/66 GPU · 5.7 tok/s</text>
-    <text x="52" y="238" fill="#8b949e" font-size="13">PICCHIO</text>
-    <text x="210" y="238" fill="#e6edf3" font-size="15">28 layers sat on CPU</text>
-    <text x="52" y="286" fill="#8b949e" font-size="13">WHY</text>
-    <text x="210" y="286" fill="#e6edf3" font-size="15">11069 MiB free gave 38/66 layers</text>
-    <text x="28" y="395" fill="#f85149" font-size="16" font-weight="700">PARTIAL OFFLOAD: 14.3× slower decode.</text>
+    <text x="52" y="170" fill="#3fb950" font-size="13">RTX 5090</text>
+    <text x="210" y="170" fill="#e6edf3" font-size="17">32 GB · 66/66 GPU · 81.5 tok/s</text>
+    <text x="52" y="244" fill="#f85149" font-size="13">RTX 4070S</text>
+    <text x="210" y="244" fill="#f85149" font-size="17" font-weight="700">12 GB · 38/66 GPU · 5.7 tok/s</text>
   </g>
 
   <g visibility="hidden">

@@ -15,6 +15,10 @@ from picchio import parse_block  # noqa: E402
 
 
 BENCHMARKS = (
+    "linux-5090-27b.txt",
+    "windows-4070s-27b.txt",
+    "windows-4070s-cuda.txt",
+    "windows-4070s-cpu-build.txt",
     "healthy-metal.txt",
     "cpu-fallback.txt",
     "ollama-qwen35.txt",
@@ -23,7 +27,6 @@ BENCHMARKS = (
     "linux-5090-cuda.txt",
     "linux-5090-vulkan-nonce.txt",
     "linux-5090-ollama-nonce.txt",
-    "linux-5090-27b.txt",
     "ollama-35b.txt",
 )
 

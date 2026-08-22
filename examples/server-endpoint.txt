@@ -1,6 +1,7 @@
 model    Qwen3.5-9B-Q4_K_M.gguf, llama-server b9430-d48a56eff
 gpu      NO EVIDENCE (the server api exposes no placement)
-os       gpu idle 0%, work 99%, mem +0.3 GiB, 11.0 W
+os       gpu idle 0%, work 99%, mem +0.3 GiB, 11.0 W, 0.51 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
 ctx 4096         prefill         decode      wallclock
   warm mid   567.7 tok/s     21.3 tok/s     17.4 tok/s
   warm span      566~570      21.2~21.4      17.3~17.5

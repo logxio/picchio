@@ -1,0 +1,7 @@
+{
+ "wall_s": 2.517242170870304,
+ "engine": "llama.cpp b0.2.0-dev",
+ "model_name": "Qwen3.5-9B Q4_K_M",
+ "extra_args": [],
+ "prompt_nonce": "Run be2ff2b0 pass 02. "
+}

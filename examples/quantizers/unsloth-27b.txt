@@ -1,0 +1,26 @@
+picchio id: Qwen3.8-27B-UD-Q4_K_M.gguf
+  file       sha256 322e194ff797, 16,464,440,224 bytes
+  source     quantized_by Unsloth; repo_url
+             https://huggingface.co/unsloth; base_model.0.repo_url
+             https://huggingface.co/Qwen/Qwen3.8-27B;
+             base_model.0.organization Qwen (the file's own claim,
+             verified against nothing)
+  claimed    Q4_K_M (general.file_type; the name agrees)
+  walked     866 tensors, 9 types, priced one by one:
+    q5_K      131 tensors   5.50 bits   29.4% of weight bytes
+    iq4_xs    117 tensors   4.25 bits   28.9% of weight bytes
+    q4_K      104 tensors   4.50 bits   25.6% of weight bytes
+    q6_K       30 tensors   6.56 bits   11.0% of weight bytes
+    iq4_nl      7 tensors   4.50 bits    2.0% of weight bytes
+    q3_K        7 tensors   3.44 bits    1.6% of weight bytes
+    iq3_s       4 tensors   3.44 bits    0.9% of weight bytes
+    q8_0      106 tensors   8.50 bits    0.5% of weight bytes
+    f32       360 tensors  32.00 bits    0.1% of weight bytes
+  effective  4.82 bits per weight: 16,453,443,584 tensor bytes
+             over 27,320,697,856 weights; the header's own offsets
+             audit to the same byte total
+  kv cache   a runtime choice, not in the model, and no measured
+             run for this model and engine has recorded it yet.
+             Measure once (./picchio MODEL) and the card
+             cites that run; a local Ollama run needs readable
+             runner logs

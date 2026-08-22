@@ -1,0 +1,16 @@
+model    qwen3.6:35b-a3b, 34.7 B, Q4_K_M, 20.31 GiB, ollama 0.31.1
+gpu      ENGAGED: 100% of weights in GPU memory (ollama ps)
+os       gpu idle 0%, work 96%, mem +20.9 GiB, 12.7 W, 0.40 J/tok
+settings not recorded: the ollama api returns no sampling settings
+ctx 4096         prefill         decode      wallclock
+  cold       572.2 tok/s     28.9 tok/s      6.0 tok/s
+  warm mid   728.7 tok/s     31.2 tok/s     23.4 tok/s
+  warm span      712~745      29.6~32.7      22.0~24.9
+where the cold pass went (21.2 s)
+  load weights   15.3 s  ####################........   72%
+  prefill         1.4 s  ##..........................    6%
+  decode          4.4 s  ######......................   21%
+  engine misc     0.1 s  ............................    0%
+VERDICT: HEALTHY. Ollama reports 100% of weights in GPU memory.
+  Quote the warm median decode: 31.2 tok/s.
+-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

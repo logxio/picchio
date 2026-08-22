@@ -1,72 +1,20 @@
 #!/usr/bin/env python3
-# picchio: knocks on your local LLM setup and listens for hollow spots.
-#
-# What it does, in one run:
-#   1. runs the same fixed prompt through your model N times (default 3;
-#      the first pass is the cold one, the rest are warm)
-#   2. reads the engine's own timing and placement evidence, and on
-#      macOS also samples the OS's own GPU meter (ioreg) while it runs
-#   3. reports prefill, decode and wallclock tok/s as three separate lanes,
-#      cold pass first, then the warm median and the warm spread
-#   4. tells you whether the GPU actually did the work, or quietly did
-#      not: the engine's claim, the OS meter and the speed signature
-#      must agree, and any two of them fighting is its own verdict;
-#      on a degraded verdict one WHY line names the cause it can prove
-#      (explicit flag, memory fit, init failure) or says unknown
-#   5. shows where the seconds of the cold pass went (load, prefill, decode)
-#   6. prints a verdict block sized to fit in a forum comment
-#
-# Usage:
-#   python3 picchio.py /path/to/model.gguf            llama.cpp, full diagnosis
-#   python3 picchio.py qwen3.5:9b                     ollama tag, measurement
-#   python3 picchio.py http://127.0.0.1:8080          llama-server endpoint,
-#                                       measurement of a server already up
-#   python3 picchio.py model.gguf --explain 36        classify a number you saw
-#   python3 picchio.py --explain 36                   same, against last run
-#   python3 picchio.py --selftest                     replay examples/raw
-#   python3 picchio.py model.gguf -- --device none -ngl 0
-#                                       (args after -- go to the engine)
-#   python3 picchio.py guard -- llama-server --verbose -m model.gguf
-#                                       (watch your own command; warn on
-#                                        degraded placement, never kill)
-#   python3 picchio.py compare mine.txt theirs.txt
-#                                       (diff two pasted verdict blocks,
-#                                        name the variable that did it)
-#   python3 picchio.py verify block.txt
-#                                       (re-derive a pasted block's own
-#                                        physics; flag it if it lies)
-#   python3 picchio.py watch ollama --json --keep-logs evidence/
-#                                       (point the OS gpu meter at any
-#                                        running engine; no stderr parse)
-#   python3 picchio.py monitor qwen3.5:9b --json
-#                                       (probe a running server or ollama on
-#                                        a timer; flag any request the GPU
-#                                        dropped; --json to paste in an issue)
-#   python3 picchio.py run suite.json
-#                                       (run/resume a queue, generic agent
-#                                        trace, or bare/product parity job)
-#   python3 picchio.py model.gguf --ctx-sweep
-#                                       (re-measure at 4k/16k/32k context
-#                                        and report the decode decay slope)
-#   python3 picchio.py plan [MODEL]
-#                                       (will it fit, from the gguf header;
-#                                        decode estimate once calibrated)
-#
-# Needs: python3 (any recent one), plus llama.cpp on PATH or a local ollama.
-# Nothing else. No pip.
-#
-# Exit codes: 0 ok/healthy, 2 could not run, 3 partial offload,
-#             4 silent cpu fallback, 5 conflicting evidence.
-#             verify: 0 self-consistent, 5 flagged, 2 unreadable.
+"""Picchio local LLM measurement and evidence CLI.
+
+The current human and machine command contracts come from
+``picchio --help`` and ``picchio capabilities --json``.
+"""
 
 import argparse
 import ctypes
 import glob
+import hashlib
 import io
 import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import statistics
 import struct
@@ -87,6 +35,15 @@ if os.path.isdir(_SOURCE_ROOT) and _SOURCE_ROOT not in sys.path:
     sys.path.insert(0, _SOURCE_ROOT)
 
 from picchio_core import gpu_meters  # noqa: E402  (needs the path above)
+# share's output shapes and the whole of vet live in the module layer:
+# both are new capability, and this entry point is already long enough
+# that new capability landing in it is a rule, not a preference. What
+# stays here is the wiring that reaches the gguf walk and the cache.
+from picchio_core.share import (  # noqa: E402
+    SHARE_COLUMNS, SHARE_URL, render_share, share_line, share_missing,
+    share_post, share_row)
+from picchio_core.vet import (  # noqa: E402
+    VET_NOTES, vet_cli, vet_quant_note, vet_rate_lane, vet_scan)
 
 VERSION = "0.1.0"
 # Measurement protocol tag, printed in the block footer. If the prompt
@@ -95,6 +52,14 @@ VERSION = "0.1.0"
 # if they were one series.
 PROTOCOL = "mp1"
 WIDTH = 66
+# Lines in the verdict block, counted and enforced by the renderer, not
+# hoped for. It was 15 until the settings line landed; a block carrying
+# a WHY line was already spending every one of those, and the verdict
+# paragraph cannot shrink below one line, so the disclosure had to be
+# paid for in budget rather than out of the paragraph. Still one
+# screen, still one forum comment. Adding a line means raising this
+# number on purpose, which is the point of it being a number.
+HEIGHT = 16
 # The exit code contract, in one place because it is a public one: the
 # global picchio skill and every script that shells out reads these.
 # 0 also covers the states where picchio cannot prove placement but did
@@ -128,6 +93,31 @@ _PARA = (
 BENCH_PROMPT = "".join(
     "Consider case number {}: {}".format(i + 1, _PARA) for i in range(8)
 )
+
+
+def bench_prompt(run_id, i):
+    """The fixed prompt behind a per-pass nonce.
+
+    An engine that keeps a prefix cache will serve the second pass from
+    it and still report the full prompt token count: measured on ollama
+    0.32.15, three passes reported 770 prompt tokens each and took
+    18.37 s, 36.7 ms and 33.6 ms. The 36 ms readings are a cache lookup
+    wearing a prefill number's clothes.
+
+    A prefix nobody has sent before defeats that, and it goes at the
+    front because a cache matches on the leading tokens. The body is
+    untouched and the nonce is the same shape every pass, so the passes
+    stay comparable to each other and the rates stay comparable to
+    every mp1 number ever published: five tokens onto seven hundred
+    moves a rate by less than the warm span already does."""
+    return prompt_nonce(run_id, i) + BENCH_PROMPT
+
+
+def prompt_nonce(run_id, i):
+    """The prefix one pass puts in front of the fixed prompt. Written
+    into that pass's kept meta, so the evidence that no two passes
+    shared a prefix is in the artifact rather than in a promise."""
+    return "Run {} pass {:02d}. ".format(run_id, i + 1)
 
 
 # ----------------------------------------------------------------- machine
@@ -196,6 +186,7 @@ def blank_pass():
         "kv_types": None, "kv_source": None, "tensor_types": None,
         "free_mib": None, "fit_seen": False, "init_fail": None,
         "prefill_toks": None, "decode_toks": None, "wallclock_toks": None,
+        "sampling": None, "nonce": None,
     }
 
 
@@ -461,8 +452,12 @@ def parse_stderr(text, wall_s):
     # e.g. "using device CUDA0 (NVIDIA GeForce RTX 4090) (0000:61:00.0)
     # - 23818 MiB free": on b9430 CUDA builds this is the only line
     # naming the device (no ggml_cuda_init, no "Device 0:" lines exist
-    # there, verified on the 4090 fixtures)
-    re_cuda_dev = re.compile(r"using device CUDA\d+ \(([^)]+)\)")
+    # there, verified on the 4090 fixtures). llama.cpp puts the backend
+    # in the device id it picks, so the same line answers for Vulkan0
+    # and SYCL0 too; reading the backend out of it is one rule instead
+    # of a per backend banner string to remember, and the Vulkan build
+    # measured here prints no ggml_vulkan banner at all.
+    re_dev_used = re.compile(r"using device ([A-Za-z]+)\d+ \(([^)]+)\)")
     re_params = re.compile(r"model params\s*=\s*([\d.,]+\s*\S?)")
     re_size = re.compile(r"file size\s*=\s*([\d.,]+\s*\S+)")
     re_threads = re.compile(r"n_threads\s*=\s*(\d+).*?/\s*(\d+)")
@@ -478,6 +473,19 @@ def parse_stderr(text, wall_s):
     # loader's own per-type census, the engine side of the id cross
     # check against the gguf table walk
     re_ttype = re.compile(r"- type\s+(\S+):\s+(\d+) tensors")
+    # e.g. "sampler seed: 7" and, inside the "sampler params:" block,
+    # "top_k = 40, top_p = 0.950, min_p = 0.050, ..., temp = 0.800".
+    # The engine already prints the settings it is about to sample
+    # with; the block was simply not repeating them. Anchored on the
+    # "= value" form so the sampler chain line ("-> temp-ext ->") and
+    # the wider names around them (dynatemp_range, typical_p) cannot
+    # be mistaken for the four fields read here.
+    re_seed = re.compile(r"sampler seed:\s*(\d+)")
+    # the value group has to end on a digit: these settings are printed
+    # comma separated ("top_p = 0.950, min_p = 0.050"), and a group that
+    # may end on a separator swallows the list comma, which _num then
+    # reads as this locale's decimal point and returns 950 for 0.95
+    re_samp = re.compile(r"\b(top_k|top_p|min_p|temp)\s*=\s*(-?[\d.,]*\d)")
 
     for line in text.splitlines():
         if "prompt eval time" in line:
@@ -502,10 +510,13 @@ def parse_stderr(text, wall_s):
         if m:
             d["gpu_device"] = m.group(1).strip()
             d["gpu_kind"] = "Metal"
-        m = re_cuda_dev.search(line)
+        m = re_dev_used.search(line)
         if m and not d["gpu_device"]:
-            d["gpu_kind"] = "CUDA"
-            d["gpu_device"] = _vendorless(m.group(1))
+            # never overwrite a kind the log already stated: a HIP build
+            # says "ROCm devices" further up and then still calls its
+            # device CUDA0, and the log's own word wins
+            d["gpu_kind"] = d["gpu_kind"] or m.group(1)
+            d["gpu_device"] = _vendorless(m.group(2))
         if "ROCm devices" in line:
             # a HIP build compiles the cuda backend and announces itself
             # as "ggml_cuda_init: found 3 ROCm devices" (GGML_CUDA_NAME,
@@ -548,6 +559,18 @@ def parse_stderr(text, wall_s):
             # twice per pass; identical values, overwrite is idempotent
             d["tensor_types"] = d["tensor_types"] or {}
             d["tensor_types"][m.group(1)] = int(m.group(2))
+        m = re_seed.search(line)
+        if m:
+            d["sampling"] = d["sampling"] or {}
+            d["sampling"]["seed"] = int(m.group(1))
+        for key, val in re_samp.findall(line):
+            n = _num(val)
+            if n is not None:
+                # the loader prints the block once per load and loads
+                # twice per pass; identical values, overwrite is
+                # idempotent, same as the tensor census above
+                d["sampling"] = d["sampling"] or {}
+                d["sampling"][key] = n
         m = re.search(r"n_expert\s+=\s*(\d+)", line)
         if m:
             # 0 on a dense model; the cache keeps this so plan knows a
@@ -762,13 +785,27 @@ def looks_like_tag(s):
     return "/" not in s and not s.lower().endswith(".gguf")
 
 
-HINT_NO_MODELS = (
-    "picchio: no model given, and none found in the usual places\n"
-    "(no ollama tags, no .gguf in the current folder, the HF cache,\n"
-    "or the LM Studio folders).\n\n"
-    "Point it at any .gguf file or ollama tag:\n"
-    "  python3 picchio.py /path/to/model.gguf\n"
-    "  python3 picchio.py some-tag:latest")
+def invocation():
+    """The command that actually reached this process, kept pasteable.
+
+    A source checkout needs the interpreter. The downloaded zipapp already
+    has a shebang and must not name a picchio.py file that was never
+    downloaded."""
+    raw = sys.argv[0] or "picchio"
+    if raw.endswith(".py"):
+        return "python3 " + shlex.quote(raw)
+    return shlex.quote(raw)
+
+
+def hint_no_models():
+    command = invocation()
+    return (
+        "picchio: no model given, and none found in the usual places\n"
+        "(no ollama tags, no .gguf in the current folder, the HF cache,\n"
+        "or the LM Studio folders).\n\n"
+        "Point it at any .gguf file or ollama tag:\n"
+        "  {} /path/to/model.gguf\n"
+        "  {} some-tag:latest".format(command, command))
 
 
 def human_size(nbytes):
@@ -845,8 +882,9 @@ def print_discovery(cands, dropped=0):
     rows = [('"{}"'.format(arg) if " " in arg else arg,
              _sourced(note, size)) for label, note, arg, size in cands]
     w = min(max(len(q) for q, _ in rows), 48)
+    command = invocation()
     for q, note in rows:
-        print("  python3 picchio.py {:<{w}} ({})".format(q, note, w=w))
+        print("  {} {:<{w}} ({})".format(command, q, note, w=w))
     if dropped:
         print("  ... and {} more not shown.".format(dropped))
     print("\nPick one, or point it at any other .gguf path or ollama tag.")
@@ -1002,6 +1040,18 @@ def map_server(resp, wall_s):
     the prompt tokens reused from the kv cache instead of evaluated."""
     d = blank_pass()
     d["wall_s"] = wall_s
+    # generation_settings is the server's own echo of what it sampled
+    # with, keys verified on b9430. It spells temperature in full where
+    # the cli log abbreviates it; one name reaches the block.
+    gs = resp.get("generation_settings") or {}
+    samp = {}
+    for key, src in (("temp", "temperature"), ("top_k", "top_k"),
+                     ("top_p", "top_p"), ("min_p", "min_p"),
+                     ("seed", "seed")):
+        v = gs.get(src)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            samp[key] = v
+    d["sampling"] = samp or None
     t = resp.get("timings") or {}
     if t.get("prompt_ms") and t.get("prompt_n"):
         d["prompt_ms"] = float(t["prompt_ms"])
@@ -1126,29 +1176,101 @@ def telemetry_summary(samples, marks, hot=False, src=None):
     if not samples or not marks:
         return {"off": "no samples"}
     t_first = marks[0]["t_end"] - marks[0]["wall_s"]
-    idle = [s["dev"] for s in samples if s["t"] < t_first]
-    work, work_w, mem_run = [], [], []
+    pre = [s for s in samples if s["t"] < t_first]
+    idle = [s["dev"] for s in pre]
+    work, work_w, mem_run, dec_w = [], [], [], []
     for m in marks:
         dec1 = m["t_end"] - TELE_PAD_S
-        pre0 = dec1 - m["eval_s"] - m["prompt_s"]
+        dec0 = dec1 - m["eval_s"]
+        pre0 = dec0 - m["prompt_s"]
         t0 = m["t_end"] - m["wall_s"]
         for s in samples:
             if pre0 <= s["t"] <= dec1:
                 work.append(s["dev"])
                 work_w.append(s.get("gpu_w"))
+            if dec0 <= s["t"] <= dec1 and s.get("gpu_w") is not None:
+                # decode only, kept apart from the combined compute
+                # window on purpose: prefill runs the gpu much harder
+                # (22.9 W peak against a 10.6 W decode median, measured
+                # here), so energy per generated token priced off the
+                # combined median would charge decode for prefill's
+                # bursts
+                dec_w.append(s["gpu_w"])
             if t0 <= s["t"] <= m["t_end"] and s["mem"] is not None:
                 mem_run.append(s["mem"])
-    mem_base = _med([s["mem"] for s in samples if s["t"] < t_first])
+    mem_base = _med([s["mem"] for s in pre])
     step = None
     if mem_base is not None and mem_run:
         step = max(0, max(mem_run) - mem_base)
     work = [w for w in work if w is not None]
     return {
         "hz": TELE_HZ, "n": len(samples), "src": src,
-        "idle_med": _med(idle), "work_med": _med(work),
+        "idle_med": _med(idle),
+        "idle_w": _med([s.get("gpu_w") for s in pre]),
+        "work_med": _med(work),
         "work_n": len(work), "mem_step": step,
         "work_w": _med(work_w), "throttled": bool(hot),
+        "dec_w": _med(dec_w), "dec_n": len(dec_w),
     }
+
+
+def _watts(w):
+    """Watts for a block line: a tenth up to three digits, then whole
+    ones, so the field never grows past five characters."""
+    return "{:.1f} W".format(w) if w < 100 else "{:.0f} W".format(w)
+
+
+# Utilization alone cannot tell drawing from computing, and the band it
+# confuses them across is an order of magnitude wide. Six pre-run
+# windows measured on the Mac here, one median each, four of them in
+# examples/raw: 0.00, 0.03, 0.13 W under a still desktop, then 0.38,
+# 0.57 and 1.07 W under a busy one reading 30%, 43% and 50%
+# utilization. Compute on that same chip, over those same runs' decode
+# windows, costs 8.7, 10.5, 11.0, 11.4 and 13.4 W. Nothing has landed
+# between 1.07 and 8.69 and the gate sits at the geometric centre of
+# that empty band, a factor of three clear on either side.
+#
+# The discrete cards have no entry, which is a reading and not an
+# oversight: of eight NVML pre-run windows the seven quiet ones sat at
+# 0% utilization, where power is never consulted, and the one that read
+# busy was a genuinely busy card, 31% at 122 W. No high utilization low
+# power window has been seen on one, so there is no band to put a number
+# in; borrowing the Mac's watts would be inventing a reading, and the
+# amdgpu meter has never been sampled at all. Either one keeps the
+# utilization answer until somebody measures it.
+#
+# A meter that records no src cannot be matched to a scale and gets no
+# rescue either, which is why replaying an artifact from before this
+# field existed returns exactly what it returned then.
+IDLE_UTIL_GATE = 25
+IDLE_W_GATE = {"ioreg": 3.0}
+
+
+def pre_run_idle(tele):
+    """(idle, note): whether the GPU was quiet before pass 1, and the
+    one sentence that explains the answer when it is not the obvious
+    one.
+
+    A Mac desktop drives its GPU past half utilization to move windows
+    and play video while drawing about a watt. That is pixels, and it
+    takes nothing away from the run that follows, so a machine that
+    looks busy by percent and idle by watts is idle. Power is the
+    second signal because it is the one that separates the two.
+
+    A meter with no calibrated idle draw of its own gets no second
+    signal and keeps the utilization answer."""
+    util = (tele or {}).get("idle_med")
+    if util is None or util <= IDLE_UTIL_GATE:
+        return True, None
+    watt, gate = tele.get("idle_w"), IDLE_W_GATE.get(tele.get("src"))
+    if watt is None or gate is None or watt >= gate:
+        return False, None
+    # short on purpose. It leads the verdict paragraph, and the
+    # paragraph drops sentences from the tail to hold the block's line
+    # budget, so every character this spends is taken off the end of
+    # the reading advice. Measurement, inference, consequence, done
+    return True, ("Pre-run gpu {:.0f}% at {}: not compute, so still "
+                  "judged.".format(util, _watts(watt)))
 
 
 def telemetry_vote(tele, rep, mode):
@@ -1172,9 +1294,10 @@ def telemetry_vote(tele, rep, mode):
     if tele["idle_med"] is None or tele["work_med"] is None \
             or tele["work_n"] < 6:
         return "abstain"
-    if tele["idle_med"] > 25:
-        # ioreg counts the whole GPU; on a busy desktop none of it can
-        # be pinned on this one process, so the numbers stop judging
+    if not pre_run_idle(tele)[0]:
+        # the meter counts the whole GPU; when something else was
+        # already computing on it none of it can be pinned on this one
+        # process, so the numbers stop judging
         return "abstain"
     if tele["work_med"] >= 50:
         return "agree"
@@ -1198,7 +1321,7 @@ def telemetry_read(tele):
     if tele["idle_med"] is None or tele["work_med"] is None \
             or tele["work_n"] < 6:
         return None
-    if tele["idle_med"] > 25:
+    if not pre_run_idle(tele)[0]:
         return None
     if tele["work_med"] >= 50:
         return "busy"
@@ -1207,7 +1330,29 @@ def telemetry_read(tele):
     return None
 
 
-def os_line(tele):
+def energy_per_token(tele, rep):
+    """Joules per generated token, or None when the meters cannot say.
+
+    Watts over the decode window divided by decode tokens per second is
+    joules per token; the seconds cancel, which is why this needs no
+    clock of its own and why anyone can recheck it from the block: take
+    the watts off the os line, divide by the decode rate in the lane
+    table above it. Same whole-GPU attribution as every other figure on
+    that line: this is what the machine drew, not what this process
+    drew, and on a shared GPU it is an upper bound.
+
+    Gated on the same six samples the placement vote needs. A power
+    median off two ticks is a number with no error bar pretending to
+    have one."""
+    if not tele or tele.get("off") or not rep:
+        return None
+    w, rate = tele.get("dec_w"), rep.get("decode_toks")
+    if w is None or not rate or (tele.get("dec_n") or 0) < 6:
+        return None
+    return w / rate
+
+
+def os_line(tele, rep=None):
     """The one line of OS evidence in the block, None only when the
     render has no telemetry context at all (pre-telemetry replays)."""
     if tele is None:
@@ -1226,9 +1371,13 @@ def os_line(tele):
             line = "gpu not sampled ({}); evidence: {}".format(
                 reason, tele.get("ev", "engine+timing"))
         return line
-    if tele["idle_med"] is not None and tele["idle_med"] > 25:
-        return "gpu {:.0f}% busy before the run, not idle; not judged" \
-            .format(tele["idle_med"])
+    if not pre_run_idle(tele)[0]:
+        # the watts are what disqualified it, so the watts are shown;
+        # a meter that reports none says exactly what it said before
+        watt = tele.get("idle_w")
+        return "gpu {:.0f}%{} before the run, not idle; not judged".format(
+            tele["idle_med"],
+            " at " + _watts(watt) if watt is not None else " busy")
     parts = []
     if tele["idle_med"] is not None:
         parts.append("idle {:.0f}%".format(tele["idle_med"]))
@@ -1238,13 +1387,28 @@ def os_line(tele):
         parts.append("mem +{:.1f} GiB".format(tele["mem_step"] / 1024 ** 3))
     w = tele.get("work_w")
     if w is not None:
-        parts.append("{:.1f} W".format(w) if w < 100 else
-                     "{:.0f} W".format(w))
-    if tele.get("throttled"):
-        parts.append("throttled")
+        parts.append(_watts(w))
     if not parts:
         return "gpu sampled, nothing usable came back"
-    return "gpu " + ", ".join(parts)
+    # energy sits next to the watts it is derived from, so the two read
+    # as one measurement rather than two claims. It is always present on
+    # a line that got this far: the power channel is a private framework
+    # on macOS and can go missing on a version drift, and a field that
+    # quietly disappears when its meter does is indistinguishable from a
+    # field nobody thought to print
+    j = energy_per_token(tele, rep)
+    parts.append("{:.2f} J/tok".format(j) if j is not None
+                 else "n/a J/tok")
+    if tele.get("throttled"):
+        parts.append("throttled")
+    line = "gpu " + ", ".join(parts)
+    room = WIDTH - 9  # the label gutter, same as every other block line
+    if len(line) > room:
+        # the reasons branch above has clamped since a second meter
+        # existed; this branch grew a field and inherits the same rule
+        # rather than a second hand-computed worst case
+        line = line[:max(2, room) - 2] + ".."
+    return line
 
 
 # ------------------------------------------------------------- aggregation
@@ -1254,6 +1418,70 @@ def warm_stats(passes, key):
     if not vals:
         return None, None, None
     return statistics.median(vals), min(vals), max(vals)
+
+
+# Within one run, on one model that stays loaded, prefill is the same
+# computation every pass. Committed evidence for what legitimate looks
+# like: llama.cpp on Metal spread 1.005x cold to warm, ollama 0.31.1 on
+# Metal 1.05x once a nonce stops its prefix cache from answering for
+# the warm passes (1.6x before that, and the wide half of that spread
+# was the cache, not warmup). The pathology is three
+# orders away from either, so the gate sits far above anything real and
+# still catches it: ollama 0.32.15 on CUDA read 41.9 tok/s then 22923.
+PREFILL_SPREAD_GATE = 10.0
+
+
+def nonce_witnessed(passes):
+    """True when this run's own evidence shows every pass sent a
+    different prompt prefix. Read off the passes, and written into each
+    kept meta as `prompt_nonce`, so a replayed artifact answers the
+    same question its live run did."""
+    seen = [p.get("nonce") for p in passes]
+    return all(seen) and len(set(seen)) == len(seen)
+
+
+def prefill_trust(passes, mode=None, gpu_kind=None):
+    """(scope, reason) when the prefill lane cannot be quoted whole.
+
+    Two different failures push a pass an order of magnitude off its
+    siblings. A prefix cache hands the prompt back in milliseconds
+    while still reporting every token of it. A first request that
+    carries runner start-up or shader compilation charges seconds of
+    one-time work to the prompt. Both mean a number that is not
+    prefill, and which one it is decides how much has to go.
+
+    With a nonce on every pass, the cache explanation is already ruled
+    out by this run's own evidence: no two passes shared a prefix, so
+    there was nothing to serve from. Then an outlying first pass is
+    one-time work and only the cold cell abstains. Without that
+    evidence, a replayed artifact cannot separate the two from inside
+    one run, so the whole lane goes.
+
+    Abstaining more than the evidence demands is its own kind of wrong
+    answer: shader compilation and runner start-up are permanent
+    features of those engines, and a rule that always eats the warm
+    numbers because of them reports nothing forever."""
+    rates = [p["prefill_toks"] for p in passes if p.get("prefill_toks")]
+    if len(rates) < 2:
+        return None
+    lo, hi = min(rates), max(rates)
+    if hi < PREFILL_SPREAD_GATE * lo:
+        return None
+    warm = rates[1:] or rates
+    mid = statistics.median(warm)
+    cold_alone = len(rates) > 2 and rates[0] in (lo, hi) \
+        and max(warm) < PREFILL_SPREAD_GATE * min(warm)
+    if cold_alone and nonce_witnessed(passes):
+        what = "runner start-up" if mode == "ollama" \
+            else "shader compilation" if gpu_kind == "Vulkan" \
+            else "one-time setup"
+        return ("cold", "Cold prefill abstains: {} put it {:.0f}x off "
+                        "the warm passes, {:.0f} against {:.0f} tok/s."
+                        .format(what, hi / lo, rates[0], mid))
+    who = "the cold pass" if cold_alone else "the passes"
+    return ("all", "Prefill abstains: {} ran {:.0f}x off the rest, "
+                   "{:.0f} against {:.0f} tok/s, so one is not prefill."
+                   .format(who, hi / lo, rates[0], mid))
 
 
 def build_rep(passes):
@@ -1269,6 +1497,11 @@ def build_rep(passes):
         if p.get("kv_types"):
             rep["kv_types"] = p["kv_types"]
             rep["kv_source"] = p.get("kv_source")
+            break
+    # the sampler block rides the same load, so it keeps the same rule
+    for p in reversed(passes):
+        if p.get("sampling"):
+            rep["sampling"] = p["sampling"]
             break
     return rep
 
@@ -1398,7 +1631,7 @@ def diagnose(cold, rep, mode, tele=None):
     with the fight spelled out. A missing source abstains and the os
     line says what was missing; it never quietly counts as agreement.
 
-    The block must stay inside 15 lines; the renderer drops trailing
+    The block must stay inside HEIGHT lines; the renderer drops trailing
     sentences from the paragraph until it fits, so the load bearing
     sentence goes first."""
     decode = rep["decode_toks"] or cold["decode_toks"]
@@ -1521,7 +1754,7 @@ def diagnose(cold, rep, mode, tele=None):
                 and tele["mem_step"] >= 0.5 * mb
             if not stepped:
                 # cost sentence first: the renderer drops sentences from
-                # the end under the 15 line budget, the WHY line already
+                # the end under the line budget, the WHY line already
                 # carries the evidence, and the 89 char evidence sentence
                 # cannot survive a one line squeeze (the 4090 retest cut
                 # it mid word as "eviden..")
@@ -1779,12 +2012,76 @@ def gpu_line(rep, mode):
     return g
 
 
+# The sampling settings the block reports, in the order the forum
+# thread that asked for them listed them: temperature first, seed last.
+# Nothing here is judged, only repeated; a sampler setting is not a
+# defect and picchio has no opinion about which value is right.
+SAMPLING_FIELDS = (("temp", "temp"), ("top_k", "top-k"),
+                   ("top_p", "top-p"), ("min_p", "min-p"),
+                   ("seed", "seed"))
+# Why a given engine had nothing to disclose. Each names the surface
+# that was read, so "not recorded" points at a place rather than being
+# a shrug: the id card's kv line set this precedent.
+NO_SAMPLING = {
+    "ollama": "the ollama api returns no sampling settings",
+    "server": "this server returned no generation_settings",
+    "llama.cpp": "this build's log printed no sampler params",
+}
+
+
+# seed and top-k are counts; temp, top-p and min-p are continuous
+# knobs. Formatting both by value rather than by field prints a
+# temperature of exactly 1.0 as "1", which reads like a count in a line
+# whose whole job is saying precisely which knob sat where. Measured on
+# a real pair: Qwen3.6-35B-A3B carries general.sampling.temp = 1.0 in
+# its own header and llama.cpp honors it, so this is not hypothetical.
+SAMPLING_INTS = ("seed", "top_k")
+
+
+def _samp_num(v, key):
+    """A sampler value written the way a person writes it. The server
+    hands back the float that survived a round trip through json
+    ("temperature": 0.800000011920929) and the block is not the place
+    to show sixteen digits of that."""
+    if key in SAMPLING_INTS:
+        return str(int(v))
+    if float(v).is_integer():
+        return "{:.1f}".format(v)
+    return "{:.4f}".format(v).rstrip("0")
+
+
+def settings_line(rep, mode):
+    """The settings that were actually in force, quoted from whatever
+    the engine itself said about them.
+
+    This is disclosure, not measurement: every value here was already
+    printed by the engine into a log picchio was parsing anyway, and
+    the only thing that was missing was repeating it where a reader of
+    the block can see it. An engine that says nothing gets "not
+    recorded" and the name of the surface that stayed quiet, never a
+    default filled in on its behalf. llama.cpp's own default temp is
+    0.8, and printing 0.8 for an engine that never said so would be
+    the one number in the block a reader could not trust."""
+    s = rep.get("sampling") or {}
+    parts = ["{} {}".format(label, _samp_num(s[key], key))
+             for key, label in SAMPLING_FIELDS if s.get(key) is not None]
+    line = ", ".join(parts) if parts else "not recorded: {}".format(
+        NO_SAMPLING.get(mode, "this engine reported no settings"))
+    room = WIDTH - 9  # the label gutter every block line shares
+    if len(line) > room:
+        # truncated, never dropped: same rule as the gpu line's
+        # passthrough args, so a short settings line always means the
+        # engine was short, not that the renderer ran out of room
+        line = line[:max(2, room) - 2] + ".."
+    return line
+
+
 def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
                    explain_part=None, cold_note=None, why=None,
                    ctx=CTX, extra=(), tele=None):
-    """The block stays inside 15 lines, kept narrow so it survives
+    """The block stays inside HEIGHT lines, kept narrow so it survives
     pasting into a forum comment (a long model name can push line one
-    wider). The budget is a feature; never add lines without removing."""
+    wider). The budget is a feature; a new line costs a decision."""
     cold = passes[0]
     rep = build_rep(passes)
     out = []
@@ -1807,28 +2104,50 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             astr = astr[:max(2, room) - 2] + ".."
         gline += " [" + astr + "]"
     out.append(gline)
-    oline = os_line(tele)
+    oline = os_line(tele, rep)
     if oline:
         # the OS's independent reading, right under the engine's claim;
         # absent only on replays of runs that predate the sampler
         out.append("os       " + oline)
-    # ctx rides the dead gutter before the lane headers: the only
-    # always-blank columns in the block ("ctx 9999999" just fits 11)
-    out.append("{:<11}{:>13}  {:>13}  {:>13}".format(
-        "ctx " + str(ctx), "prefill", "decode", "wallclock"))
-    if mode != "server":
-        out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
-            "cold", fmt_rate(cold["prefill_toks"]),
-            fmt_rate(cold["decode_toks"]),
-            fmt_rate(cold["wallclock_toks"])))
+    # what the engine was told to sample with, directly above the lanes
+    # those settings produced. The single most asked for missing field
+    # in the thread this came from was temperature, and every number
+    # below this line moves when it does.
+    out.append("settings " + settings_line(rep, mode))
     pm, plo, phi = warm_stats(passes, "prefill_toks")
     dm, dlo, dhi = warm_stats(passes, "decode_toks")
     wm, wlo, whi = warm_stats(passes, "wallclock_toks")
-    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
-        "warm mid", fmt_rate(pm), fmt_rate(dm), fmt_rate(wm)))
-    out.append("  {:<9}{:>13}  {:>13}  {:>13}".format(
-        "warm span", fmt_span(plo, phi, big=True), fmt_span(dlo, dhi),
-        fmt_span(wlo, whi)))
+    # a prefill lane nobody can stand behind prints the word instead of
+    # the number. "abstain" and "n/a" are different answers: n/a is
+    # nothing was read, abstain is it was read and it is not prefill.
+    trust = prefill_trust(passes, mode, rep.get("gpu_kind"))
+    scope, doubt = trust if trust else (None, None)
+    warm_out = scope == "all"
+    rows = []
+    if mode != "server":
+        rows.append(("cold", ["abstain" if scope
+                              else fmt_rate(cold["prefill_toks"]),
+                              fmt_rate(cold["decode_toks"]),
+                              fmt_rate(cold["wallclock_toks"])]))
+    rows.append(("warm mid", ["abstain" if warm_out else fmt_rate(pm),
+                              fmt_rate(dm), fmt_rate(wm)]))
+    rows.append(("warm span", ["abstain" if warm_out
+                               else fmt_span(plo, phi, big=True),
+                               fmt_span(dlo, dhi), fmt_span(wlo, whi)]))
+    # The lane column widens when a number needs it. A 5090 reads
+    # prefill in five digits, "21951.3 tok/s" fills the column exactly,
+    # and the label then runs straight into it with a single space; the
+    # committed four digit blocks all land on 13 and do not move. Two
+    # spaces is the floor because a reader scanning a column, and the
+    # parser reading it back, both need the gap to exist.
+    lane = max([13] + [len(c) + 2 - (9 - len(label))
+                       for label, cells in rows for c in cells[:1]])
+    out.append("{{:<11}}{{:>{w}}}  {{:>{w}}}  {{:>{w}}}".format(w=lane)
+               .format("ctx " + str(ctx), "prefill", "decode",
+                       "wallclock"))
+    for label, cells in rows:
+        out.append("  {{:<9}}{{:>{w}}}  {{:>{w}}}  {{:>{w}}}"
+                   .format(w=lane).format(label, *cells))
 
     if mode == "server":
         # the server owned the weights before pass 1, so no cold pass
@@ -1853,13 +2172,21 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             out.append(bar_line("prefill", prefill_s, prefill_s / wall))
             out.append(bar_line("decode", decode_s, decode_s / wall))
             out.append(bar_line("engine misc", other_s, other_s / wall))
-    # the 15 line budget is enforced, not hoped for: however many
-    # optional lines rode in (the os line, a WHY line), trailing
-    # sentences drop from the paragraph until the block fits
+    # the budget is enforced, not hoped for: however many optional
+    # lines rode in (the os line, a WHY line), trailing sentences drop
+    # from the paragraph until the block fits
+    # both leads explain something the reader can already see: an
+    # abstain where a rate belongs, and an os line that judged a machine
+    # whose own first field reads busy. They lead because the loop below
+    # eats from the tail, and a visible oddity with its reason cut off
+    # is worse than one line less of prose
+    lead = [n for n in (doubt, pre_run_idle(tele)[1]) if n]
+    if lead:
+        para = " ".join(lead) + " " + para
     fixed = len(out) + (1 if why else 0) + 1  # + WHY + footer
     vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
                            width=WIDTH - 2, subsequent_indent="  ")
-    while len(vlines) > max(1, 15 - fixed):
+    while len(vlines) > max(1, HEIGHT - fixed):
         body = para.rstrip()[:-1]
         cut = body.rfind(". ")  # whole sentences drop first,
         if cut >= 0:
@@ -1871,7 +2198,7 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             para = para[:cut] + "."
         vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
                                width=WIDTH - 2, subsequent_indent="  ")
-    room = max(1, 15 - fixed)
+    room = max(1, HEIGHT - fixed)
     if len(vlines) > room:
         # a single uncuttable sentence can still overflow; the budget
         # is enforced, not hoped for, so truncate as the last resort
@@ -1928,6 +2255,13 @@ def guard(cmd, keep_dir=None):
     the evidence is complete, and a short summary when the child exits.
     It never kills or signals the child: the requirement this mode comes
     from is a tool that warns but refuses to get in the way."""
+    # the command being judged, echoed once at the top, quoted so it can
+    # be pasted back into a shell and rerun. Everything guard says after
+    # this is about these arguments, and a reader who only has the
+    # output cannot otherwise tell which -ngl or which model produced
+    # it. Never truncated: a shortened disclosure discloses nothing.
+    sys.stderr.write("picchio guard: command: {}\n".format(
+        " ".join(shlex.quote(a) for a in cmd)))
     try:
         child = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True,
                                  errors="replace")
@@ -2006,7 +2340,7 @@ def guard(cmd, keep_dir=None):
 def guard_cli(argv):
     keep = None
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py guard [--keep-logs DIR] -- <command...>\n"
+        print("usage: picchio guard [--keep-logs DIR] -- <command...>\n"
               "wrap a llama.cpp command; warn on stderr the moment its\n"
               "own log shows layers landing off the GPU, never kill it,\n"
               "and print a placement summary when it exits.")
@@ -2016,7 +2350,7 @@ def guard_cli(argv):
         os.makedirs(keep, exist_ok=True)
         argv = argv[2:]
     if argv[:1] != ["--"] or len(argv) < 2:
-        sys.exit("picchio guard: usage: picchio.py guard "
+        sys.exit("picchio guard: usage: picchio guard "
                  "[--keep-logs DIR] -- <command...>")
     guard(argv[1:], keep)
 
@@ -2032,16 +2366,20 @@ def parse_block(text):
     block does not carry stay None and print as unknown, never guessed;
     blocks from before the fingerprint fields have no ctx line, which
     is also how the two formats are told apart."""
-    b = {k: None for k in ("model", "quant", "engine", "place", "frac",
-                           "args", "ctx", "threads", "chip", "ram", "os",
-                           "place_word", "verdict", "os_raw", "os_work",
-                           "os_idle", "os_mem", "os_watts", "os_note")}
+    b = {k: None for k in ("model", "model_gib", "quant", "engine",
+                           "place", "frac", "args", "ctx", "threads",
+                           "chip", "ram", "os", "place_word", "verdict",
+                           "os_raw", "os_work", "os_idle", "os_mem",
+                           "os_watts", "os_note", "os_joules", "settings",
+                           "protocol", "version")}
     rates = {}
     for line in text.splitlines():
         line = line.rstrip()
         m = re.match(r"model\s{4}(\S.*)", line)
         if m and b["model"] is None:
             b["model"] = m.group(1).split(",")[0].strip()
+            sm = re.search(r"([\d.]+) GiB", m.group(1))
+            b["model_gib"] = float(sm.group(1)) if sm else None
             em = re.search(r"((?:llama\.cpp|ollama)\s+\S+)$", m.group(1))
             b["engine"] = em.group(1) if em else None
             qm = RE_QUANT.search(m.group(1))
@@ -2070,9 +2408,21 @@ def parse_block(text):
         m = re.match(r"ctx (\d+)\s+prefill", line)
         if m:
             b["ctx"] = int(m.group(1))
-        m = re.match(r"\s{2}(cold|warm mid)\s{2,}(\S.*)", line)
+        # one space, not two: a five digit prefill fills the column and
+        # the label runs straight into it (measured on an RTX 5090,
+        # 21951.3 tok/s). The two fixed labels still anchor the row, so
+        # loosening the gap cannot match anything else.
+        m = re.match(r"\s{2}(cold|warm mid)\s+(\S.*)", line)
         if m and m.group(1) not in rates:
-            cells = re.findall(r"([\d.]+) tok/s|n/a", m.group(2))
+            # three cell vocabularies, not two: a rate, `n/a` for
+            # nothing was read, and `abstain` for it was read and it is
+            # not prefill. The renderer grew the third one and this did
+            # not, so picchio could print a block it could no longer
+            # read back and `verify` answered "no verdict block found",
+            # which blames the paste for the tool's own gap. Both words
+            # carry no number and both park as None; what they mean is
+            # already said in the block's own verdict line.
+            cells = re.findall(r"([\d.]+) tok/s|n/a|abstain", m.group(2))
             if len(cells) == 3:
                 rates[m.group(1)] = [float(c) if c else None for c in cells]
         if line.startswith("where the cold pass went"):
@@ -2099,6 +2449,15 @@ def parse_block(text):
             mm = re.search(r"([\d.]+) W\b", g)
             if mm:
                 b["os_watts"] = float(mm.group(1))
+            mm = re.search(r"([\d.]+) J/tok\b", g)
+            if mm:
+                b["os_joules"] = float(mm.group(1))
+        m = re.match(r"settings (\S.*)", line)
+        if m and b["settings"] is None:
+            # kept as written. Whether the engine disclosed anything is
+            # part of what a reader of the block is judging, so a
+            # "not recorded: ..." line reads back as itself, not as None
+            b["settings"] = m.group(1)
         m = re.match(r"VERDICT: (\S.*)", line)
         if m and b["verdict"] is None:
             for st in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
@@ -2107,9 +2466,11 @@ def parse_block(text):
                 if m.group(1).startswith(st):
                     b["verdict"] = st
                     break
-        m = re.match(r"-- picchio v\S+ \S+ on (.+), (\d+|\?) GB, (.+)", line)
+        m = re.match(r"-- picchio v(\S+) (\S+) on (.+), (\d+|\?) GB, (.+)",
+                     line)
         if m:
-            b["chip"], b["ram"], b["os"] = m.groups()
+            (b["version"], b["protocol"], b["chip"], b["ram"],
+             b["os"]) = m.groups()
     b["row"] = "warm mid" if "warm mid" in rates else \
         ("cold" if "cold" in rates else None)
     b["rates"] = rates.get(b["row"]) or [None] * 3
@@ -2226,12 +2587,12 @@ def render_compare(names, a, b):
 
 def compare_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py compare A.txt B.txt\n"
+        print("usage: picchio compare A.txt B.txt\n"
               "each file holds one pasted verdict block (surrounding "
               "forum text is fine)")
         sys.exit(0)
     if len(argv) != 2:
-        sys.exit("picchio compare: usage: picchio.py compare A.txt B.txt\n"
+        sys.exit("picchio compare: usage: picchio compare A.txt B.txt\n"
                  "each file holds one pasted verdict block (surrounding "
                  "forum text is fine)")
     blocks = []
@@ -2263,6 +2624,19 @@ def claim_shape(b):
     if b["place_word"] == "PARTIAL" or frac is not None:
         return "partial"
     return None
+
+
+def os_residency_witness(b):
+    """True when the pasted os line saw a model-sized step in gpu memory.
+
+    Live measurement already treats a step of at least half the model as
+    proof the weights landed, and abstains rather than contradict a
+    bursty utilization median (telemetry_vote). Static verification has
+    to make the same vote or it rejects blocks the live judge correctly
+    accepted: an RTX 5090 running Vulkan read a 0% median over 99
+    samples of which 23 were non-zero and one peaked at 92%."""
+    return b["os_mem"] is not None and b["model_gib"] is not None \
+        and b["os_mem"] >= 0.5 * b["model_gib"]
 
 
 def verify_block(b):
@@ -2307,7 +2681,8 @@ def verify_block(b):
     #    only when it was sampled and the machine was idle enough to read;
     #    a block whose own os line already abstained is not judged on it
     if b["os_work"] is not None and b["os_note"] is None:
-        if claim == "gpu" and b["os_work"] < 15:
+        if claim == "gpu" and b["os_work"] < 15 \
+                and not os_residency_witness(b):
             f.append("claims full gpu but its own os line saw the gpu at "
                      "{}% while the tokens were made".format(b["os_work"]))
         if claim == "cpu" and b["os_work"] >= 50:
@@ -2341,7 +2716,8 @@ def render_verify(src, b, verdict, flags):
     if b["os_raw"]:
         out.append("  os        " + b["os_raw"])
     if verdict == "PASS":
-        witnessed = b["os_work"] is not None and b["os_note"] is None
+        witnessed = b["os_note"] is None and (b["os_work"] is not None
+                                              or os_residency_witness(b))
         out.append("VERDICT: PASS. placement, the timing signature"
                    + (" and the os meter" if witnessed else "")
                    + " all describe the same run.")
@@ -2359,7 +2735,7 @@ def render_verify(src, b, verdict, flags):
 
 def verify_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py verify [FILE]\n"
+        print("usage: picchio verify [FILE]\n"
               "re-derive the physics a pasted verdict block claims, and\n"
               "flag it when placement, the prefill/decode signature, the\n"
               "os meter and the headline do not describe the same run.\n"
@@ -2650,7 +3026,7 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
 
 def watch_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py watch [PID|ollama] [--for SEC] [--json] "
+        print("usage: picchio watch [PID|ollama] [--for SEC] [--json] "
               "[--keep-logs DIR]\n"
               "point the os gpu meter at a running inference process (or\n"
               "the whole gpu) and report whether the gpu is doing the work,\n"
@@ -2685,7 +3061,7 @@ def watch_cli(argv):
             engine, i = a, i + 1
         else:
             sys.exit("picchio watch: unexpected argument {!r}.\nusage: "
-                     "picchio.py watch [PID|ollama] [--for SEC] [--json] "
+                     "picchio watch [PID|ollama] [--for SEC] [--json] "
                      "[--keep-logs DIR]".format(a))
     watch(pid, engine, dur, keep, as_json)
 
@@ -2726,6 +3102,294 @@ MON_EVERY_S = 30.0      # default seconds between probes; each probe is one
                         # puts more real load on the server being watched
 MON_TAG = {"OK": "ENGAGED", "FLAG": "NOT ENGAGED",
            "WATCH": "UNSURE", "NODATA": "NO DATA"}
+
+
+# ------------------------------------------------------------- residency
+#
+# The other half of the same question monitor already asks. Placement is
+# "the engine says GPU, did the GPU do the work"; residency is "the
+# engine says N GB, is N GB what this machine needs or just what it
+# happens to be holding right now". A streaming MoE runtime keeps the
+# routed experts in memory and leaves the rest on disk, so a single
+# reading taken early is a working set, not a capacity.
+#
+# One physical fact shapes every judgment below: a resident set smaller
+# than the model file is normal for anything mmapped, because untouched
+# pages are never counted. The ratio alone proves nothing. What
+# separates the cases is drift across rounds, which is why this rides
+# monitor (already the across-rounds machine) and not a snapshot.
+
+# Distinct passages, not one paragraph repeated. A MoE routes on content:
+# probe the same text ten times and the same experts answer ten times, the
+# resident set stops moving after round one, and a streaming runtime looks
+# identical to a fully loaded one. Length is matched so the rate lanes stay
+# comparable probe to probe; only the content varies.
+_RES_SEEDS = (
+    "A harbour master logs every vessel by draught and tide, refusing "
+    "berths that would ground a hull at low water.",
+    "The vineyard keeps its malolactic fermentation cool, trading a "
+    "rounder mouthfeel for acidity the cellar can age.",
+    "Sediment cores from the lakebed record ash layers, each one a "
+    "eruption dated against the varves above and below it.",
+    "The compiler hoists loop invariants only after proving no aliasing "
+    "between the pointers the loop body dereferences.",
+    "Baroque counterpoint forbids parallel fifths because the two voices "
+    "stop sounding independent the moment they move together.",
+    "Antitrust remedies split conduct from structure: behavioural decrees "
+    "police a firm, divestiture changes what the firm is.",
+    "Mycorrhizal networks trade phosphorus for photosynthate, and the "
+    "exchange rate shifts with how shaded the seedling is.",
+    "A rope soloist backs up the ascender with a clove hitch, because the "
+    "device alone will strip the sheath on a shock load.",
+    "Kiln atmosphere decides the glaze: the same copper reads green in "
+    "oxidation and ox blood red under reduction.",
+    "Actuarial reserving discounts future claims at a rate the regulator "
+    "sets, so a rate change rewrites the balance sheet.",
+)
+
+
+def residency_prompt(i, words=None):
+    """Probe i's prompt: one seed, padded with itself to the length the
+    default bench prompt runs, so every probe costs the same prefill."""
+    words = words or len(BENCH_PROMPT.split())
+    seed = _RES_SEEDS[i % len(_RES_SEEDS)].split()
+    out = []
+    while len(out) < words:
+        out.extend(seed)
+    # trimmed to the exact count: a few percent of prefill drift between
+    # probes would show up in the rate lanes as noise this run invented
+    return " ".join(out[:words])
+
+
+def ollama_model_path(tag):
+    """The blob a tag's weights live in, read from the manifest rather
+    than guessed: /api/show reports sizes, not paths."""
+    base = os.path.expanduser("~/.ollama/models")
+    name, _, ver = tag.partition(":")
+    ver = ver or "latest"
+    reg = "registry.ollama.ai"
+    if "/" not in name:
+        name = "library/" + name
+    path = os.path.join(base, "manifests", reg, name, ver)
+    try:
+        with open(path) as f:
+            layers = json.load(f).get("layers") or []
+    except (OSError, ValueError):
+        return None
+    weights = [l for l in layers
+               if str(l.get("mediaType", "")).endswith(".model")]
+    if not weights:
+        return None
+    blob = max(weights, key=lambda l: l.get("size") or 0)
+    digest = str(blob.get("digest", "")).replace(":", "-")
+    blob_path = os.path.join(base, "blobs", digest)
+    return blob_path if os.path.exists(blob_path) else None
+
+
+def engine_pid_for(model_path):
+    """The pid actually serving this model file, or None.
+
+    Matched on the model path in the process command line, not on a
+    process name: ollama renames and relocates its runner between
+    releases, and the path is the one thing that identifies which loaded
+    model this is when several are resident. lsof is the fallback, but it
+    only answers when the weights are mmapped, and ollama runs its runner
+    with --no-mmap, so it cannot be the primary."""
+    if not model_path:
+        return None
+    hits = []
+    for line in _cmd_out(["ps", "-axo", "pid=,command="]).splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and model_path in fields[1] \
+                and fields[0].isdigit():
+            hits.append(int(fields[0]))
+    if not hits and shutil.which("lsof"):
+        for tok in _cmd_out(["lsof", "-t", model_path]).split():
+            if tok.isdigit():
+                hits.append(int(tok))
+    if len(hits) > 1:
+        # two processes hold the same weights: an old runner on its way
+        # out, or a second engine. A reading nobody can attribute is
+        # worse than no reading, so abstain, but say which case it was.
+        sys.stderr.write("picchio: {} processes are serving {}; the "
+                         "residency reading cannot be attributed to "
+                         "one\n".format(len(hits), os.path.basename(
+                             model_path)))
+        return None
+    return hits[0] if hits else None
+
+
+def ttft_ms(p, mode):
+    """Time to the first token, from figures the engine already returned.
+    The third lane the memory number must never be quoted without: every
+    byte a runtime declines to keep resident is paid for here, on the
+    fault that pulls it back in."""
+    prompt = p.get("prompt_ms")
+    if prompt is None:
+        return None
+    return (p.get("load_ms") or 0) + prompt if mode == "ollama" else prompt
+
+
+def residency_probe(pid, tag, mode):
+    """One residency reading: what the OS says is resident, and what the
+    engine says it is holding. Missing fields stay None, never zero."""
+    from picchio_core.host import memory_snapshot
+    rss = memory_snapshot(pid).get("rssBytes") if pid else None
+    reported = vram = None
+    if mode == "ollama":
+        entry = ollama_ps_entry(tag) or {}
+        reported, vram = entry.get("size"), entry.get("size_vram")
+    return {"rss": rss, "reported": reported, "vram": vram}
+
+
+# Calibrated on one machine, 2026-08-20, Apple M5 32 GB, the same
+# qwen3.6:35b-a3b (20.61 GiB on disk) run two ways. Raw sessions in
+# .ai/evidence-residency/:
+#
+#   ollama, Metal, fully loaded  20.8 GiB held, decode 26.6-33.3 tok/s
+#                                (spread 1.25), first token 0.8-1.3 s
+#   llama.cpp, cpu, mmap          5.3-14.9 GiB resident (median 9.7,
+#                                ratio 0.47), decode 6.6-16.8 tok/s
+#                                (spread 2.5), first token 16.5-31.7 s
+#
+# Two runs is two points. These are observation lines, not gates: the
+# residency lane never sets the exit code, so a line drawn between two
+# measurements can only mislabel a paragraph, never withhold a result.
+RES_CAPACITY_RATIO = 0.9   # resident/file at or above this is the model
+RES_MIN_PROBES = 5
+
+
+# Shape needs three thirds of at least three rounds each to be read at
+# all, and a run that has not reached that says so.
+RES_SHAPE_MIN = 9
+RES_FLAT_DISPERSION = 0.05  # median absolute deviation over the level
+
+
+def residency_shape(series):
+    """(shape, plateau bytes or None, one clause of detail).
+
+    Level cannot separate a runtime that manages residency from one that
+    simply has not touched the rest of the file yet. mmap hands out a
+    small resident set for free on round one and a slightly larger one
+    every round after, so a reading taken early reads exactly like a
+    bounded cache. The curve is what tells them apart, and the axis is
+    rounds, not seconds inside one run.
+
+    Four shapes, none of them a threshold on gigabytes:
+
+      RAMP        still climbing at the end. Whatever it holds now is
+                  not what it will hold later, so no figure taken from
+                  this run is quotable as a working set.
+      PLATEAU     climbed, then stopped climbing. The plateau is the
+                  working set, and it is the number worth comparing.
+      FLAT        never moved. Everything was resident from round one.
+      OSCILLATING moves with no direction. Measured on a machine under
+                  memory pressure, where the kernel reclaims clean
+                  pages as fast as the run touches them, so the level
+                  is an equilibrium between two processes and not a
+                  property of the engine at all.
+    """
+    if len(series) < RES_SHAPE_MIN:
+        return ("UNDECIDED", None,
+                "{} rounds is too few to read a shape; {} is the "
+                "minimum".format(len(series), RES_SHAPE_MIN))
+    cut = len(series) // 3
+    lo = statistics.median(series[:cut])
+    mid = statistics.median(series[cut:2 * cut])
+    hi = statistics.median(series[2 * cut:])
+    level = statistics.median(series) or 1
+    noise = statistics.median([abs(x - level) for x in series])
+    rise, late = hi - lo, hi - mid
+    if abs(rise) <= noise:
+        if noise / float(level) <= RES_FLAT_DISPERSION:
+            return ("FLAT", level, "never moved across the run")
+        return ("OSCILLATING", None,
+                "swings {:.0%} of its own level with no direction, which "
+                "is what reclaim looks like, not a "
+                "cache".format(noise / float(level)))
+    if rise < 0:
+        return ("FALLING", None,
+                "shrank across the run; the kernel is reclaiming faster "
+                "than the run touches new pages")
+    if late > 0.3 * rise:
+        return ("RAMP", None,
+                "still climbing at the last round, so nothing measured "
+                "here is the number it settles at")
+    return ("PLATEAU", hi, "climbed and then stopped climbing")
+
+
+def residency_verdict(rows, file_bytes, mode):
+    """(state, resident bytes, para) for the residency lane, or None when
+    the lane never got a reading.
+
+    Shape decides, not level. An earlier cut of this judged on the
+    resident/file ratio plus how much decode wobbled, and it was wrong in
+    the one way that matters: a run that is uniformly slow has a small
+    wobble, so a 4 tok/s crawl with fifty second first tokens passed the
+    steadiness test and got told it "really did need less than the file".
+    Uniformly bad is not steady. The ratio is also exactly what mmap
+    hands out for free, so no ratio can carry this verdict on its own.
+
+    The other trap is instrument, not statistics: on unified memory a
+    fully offloaded model lives where a process resident set cannot see
+    it, so rss reads a couple of GiB for a twenty GiB model. Placement
+    decides which instrument applies, and placement is already measured
+    one lane over."""
+    rows = [r for r in rows if r.get("rss")]
+    if len(rows) < RES_MIN_PROBES:
+        return None
+    series = [r["rss"] for r in rows]
+    decodes = [r["decode"] for r in rows if r.get("decode")]
+    ttfts = [r["ttft_ms"] for r in rows if r.get("ttft_ms")]
+    resident = statistics.median(series)
+    speed = statistics.median(decodes) if decodes else None
+    first = statistics.median(ttfts) if ttfts else None
+    # the triple always travels together: held bytes quoted without the
+    # speed they bought is the reading this lane exists to take apart
+    cost = ""
+    if speed:
+        cost = " It bought {:.0f} tok/s decode".format(speed)
+        cost += " at {:.1f} s to first token.".format(first / 1000.0) \
+            if first else "."
+    on_gpu = sum(1 for r in rows if r.get("state") == "OK")
+    if mode == "ollama":
+        vram = [r["vram"] for r in rows if r.get("vram")]
+        device = bool(vram) and statistics.median(vram) >= 0.5 * (
+            statistics.median([r["reported"] for r in rows
+                               if r.get("reported")] or [1]))
+    else:
+        device = on_gpu > len(rows) / 2
+    if device:
+        held = statistics.median([r["reported"] for r in rows
+                                  if r.get("reported")] or [0]) or None
+        return ("WEIGHTS ON DEVICE", held,
+                "The weights are in device memory, which a process "
+                "resident set does not count, so rss is not the residency "
+                "figure here.{}".format(cost))
+    if not file_bytes:
+        return ("NO RESIDENCY EVIDENCE", resident,
+                "The weights file could not be sized, so there is nothing "
+                "to read the resident set against.")
+    shape, plateau, detail = residency_shape(series)
+    frac = "{:.0%} of the weights file".format(resident / float(file_bytes))
+    if shape in ("UNDECIDED", "RAMP", "OSCILLATING", "FALLING"):
+        # every one of these means there is no settled figure to quote,
+        # which is the answer, not a failure to produce one
+        return ("NO SETTLED WORKING SET", resident,
+                "Resident set sat at {} but {}. Nothing measured here is "
+                "a working set anyone can compare.{}".format(
+                    frac, detail, cost))
+    held = plateau or resident
+    ratio = held / float(file_bytes)
+    if ratio >= RES_CAPACITY_RATIO:
+        return ("CAPACITY", held,
+                "{:.0%} of the weights file stayed resident and {}: this "
+                "number is the model, not a working set.{}".format(
+                    ratio, detail, cost))
+    return ("BOUNDED WORKING SET", held,
+            "Held {:.0%} of the weights file and {}: this run kept less "
+            "than the file and stayed there. What the rest cost is in the "
+            "next sentence.{}".format(ratio, detail, cost))
 
 
 def monitor_classify(prefill, decode, baseline=None):
@@ -2841,7 +3505,8 @@ def monitor_target_mode(arg):
     return "ollama"
 
 
-def monitor_json(target, mode, engine, machine, baseline, timeline, summ):
+def monitor_json(target, mode, engine, machine, baseline, timeline, summ,
+                 residency=None, file_bytes=None):
     """The pasteable session artifact for an issue: what was watched, the
     baseline it calibrated to, every probe in order, and the verdict that
     set the exit code. Pure, so the selftest checks its shape with no live
@@ -2856,12 +3521,20 @@ def monitor_json(target, mode, engine, machine, baseline, timeline, summ):
                     if summ["worst_ratio"] is not None else None},
         "verdict": ("SILENT CPU FALLBACK seen" if summ["flag"]
                     else "ENGAGED throughout"),
+        # a second axis, deliberately not wired to the exit code: the
+        # placement lane owns that contract and one code cannot carry
+        # two meanings
+        "residency": {
+            "weights_file_bytes": file_bytes,
+            "state": residency[0], "resident_bytes": residency[1],
+            "note": residency[2],
+        } if residency else None,
         "exit_code": 4 if summ["flag"] else 0,
     }
 
 
 def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
-            as_json=False):
+            as_json=False, residency=False):
     """Probe a running engine on a timer and flag any probe whose
     prefill/decode signature collapses. mode is 'server' (a llama-server
     url, read over /completion) or 'ollama' (a model tag, over
@@ -2886,6 +3559,25 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
         build = server_props(target).get("build_info")
         engine = "llama-server" + (" " + str(build) if build else "")
         ctx = server_ctx(target)
+    res_pid = res_path = res_bytes = None
+    if residency:
+        if mode == "ollama":
+            res_path = ollama_model_path(target)
+        else:
+            res_path = server_props(target).get("model_path")
+        try:
+            res_bytes = os.path.getsize(res_path) if res_path else None
+        except OSError:
+            res_bytes = None
+        if res_path is None:
+            sys.stderr.write(
+                "picchio monitor: cannot find the weights file for {}; the "
+                "residency lane abstains and the placement lane runs as "
+                "usual\n".format(target))
+        else:
+            sys.stderr.write(
+                "picchio monitor: residency on {:.2f} GiB of weights\n"
+                .format((res_bytes or 0) / 1024 ** 3))
     sys.stderr.write(
         "picchio monitor: probing {} every {:.0f} s (ctx {}); "
         "ctrl-c to stop\n".format(target, every, ctx))
@@ -2899,8 +3591,10 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
             lp = os.path.join(keep_dir, "probe{}.response.json".format(i)) \
                 if keep_dir else None
             try:
-                p = run_ollama_pass(target, lp)[0] if mode == "ollama" \
-                    else run_server_pass(target, lp)
+                pr = residency_prompt(i - 1) if residency else BENCH_PROMPT
+                p = run_ollama_pass(target, lp, prompt=pr)[0] \
+                    if mode == "ollama" \
+                    else run_server_pass(target, lp, prompt=pr)
             except (urllib.error.URLError, OSError, ValueError) as e:
                 # an engine that stopped answering is an event worth a line,
                 # but not a cpu conviction; keep the timer running so a
@@ -2913,11 +3607,35 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
             prefill, decode = p["prefill_toks"], p["decode_toks"]
             state, ratio = monitor_classify(prefill, decode, baseline)
             events.append((state, ratio))
-            timeline.append({
+            row = {
                 "i": i, "state": state,
                 "ratio": round(ratio, 1) if ratio else None,
                 "prefill": round(prefill, 1) if prefill else None,
-                "decode": round(decode, 1) if decode else None})
+                "decode": round(decode, 1) if decode else None}
+            if residency:
+                # ollama spawns its runner on the first request, so the
+                # pid does not exist before probe 1; a runner that dies
+                # and comes back gets picked up the same way
+                if res_pid is None or not pid_alive(res_pid):
+                    res_pid = engine_pid_for(res_path)
+                sample = residency_probe(res_pid, target, mode)
+                ttft = ttft_ms(p, mode)
+                # the three lanes ride together on purpose: a resident
+                # figure quoted without the speed it bought is the number
+                # this whole lane exists to take apart
+                row.update({
+                    "rss": sample["rss"], "reported": sample["reported"],
+                    "vram": sample["vram"],
+                    "ttft_ms": round(ttft, 1) if ttft else None,
+                    "prompt_tokens": p.get("prompt_tokens")})
+                sys.stderr.write(
+                    "          resident {:>8}  reported {:>8}  "
+                    "ttft {:>7}\n".format(
+                        human_size(sample["rss"]) if sample["rss"] else "n/a",
+                        human_size(sample["reported"])
+                        if sample["reported"] else "n/a",
+                        "{:.0f} ms".format(ttft) if ttft else "n/a"))
+            timeline.append(row)
             sys.stderr.write(colorize(monitor_line(
                 time.strftime("%H:%M:%S"), i, state, ratio, prefill, decode,
                 baseline), sys.stderr) + "\n")
@@ -2947,27 +3665,43 @@ def monitor(target, mode, every=MON_EVERY_S, duration=None, keep_dir=None,
         sys.stderr.write("\n")
     summ = monitor_summarize(events)
     sys.stderr.write(colorize(monitor_summary_line(summ), sys.stderr) + "\n")
+    res = residency_verdict(timeline, res_bytes, mode) if residency else None
+    if res:
+        sys.stderr.write(colorize("picchio monitor: {} - {} of {} on disk. "
+                                  "{}".format(
+                                      res[0], human_size(res[1]) if res[1]
+                                      else "n/a",
+                                      human_size(res_bytes) if res_bytes
+                                      else "n/a", res[2]),
+                                  sys.stderr) + "\n")
+    elif residency:
+        sys.stderr.write("picchio monitor: residency lane got fewer than {} "
+                         "readings; nothing to say.\n".format(RES_MIN_PROBES))
     if as_json:
         print(json.dumps(monitor_json(
             target, mode, engine, machine_info(),
-            round(baseline, 1) if baseline else None, timeline, summ),
-            indent=1))
+            round(baseline, 1) if baseline else None, timeline, summ,
+            res, res_bytes), indent=1))
     sys.exit(4 if summ["flag"] else 0)
 
 
 def monitor_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py monitor TARGET [--every SEC] [--for SEC] "
-              "[--json] [--keep-logs DIR]\n"
+        print("usage: picchio monitor TARGET [--every SEC] [--for SEC] "
+              "[--residency] [--json] [--keep-logs DIR]\n"
               "probe a running engine on an interval and flag any probe\n"
               "whose prefill/decode ratio collapses from that engine's own\n"
               "healthy baseline: the intermittent fallback a single snapshot\n"
               "cannot see. TARGET is a llama-server url or an ollama tag.\n"
+              "--residency also reads what the engine process is holding\n"
+              "against the weights on disk, with the decode rate and first\n"
+              "token time those bytes bought.\n"
               "--json prints a pasteable session summary. Never launches or\n"
               "kills the engine.")
         sys.exit(0)
     target = keep = None
     every, dur, as_json, i = MON_EVERY_S, None, False, 0
+    residency = False
     while i < len(argv):
         a = argv[i]
         if a == "--every" and i + 1 < len(argv):
@@ -2976,6 +3710,8 @@ def monitor_cli(argv):
             dur, i = _mon_secs("--for", argv[i + 1]), i + 2
         elif a == "--json":
             as_json, i = True, i + 1
+        elif a == "--residency":
+            residency, i = True, i + 1
         elif a == "--keep-logs" and i + 1 < len(argv):
             keep = argv[i + 1]
             os.makedirs(keep, exist_ok=True)
@@ -2984,18 +3720,18 @@ def monitor_cli(argv):
             target, i = a, i + 1
         else:
             sys.exit("picchio monitor: unexpected argument {!r}.\nusage: "
-                     "picchio.py monitor TARGET [--every SEC] [--for SEC] "
+                     "picchio monitor TARGET [--every SEC] [--for SEC] "
                      "[--json] [--keep-logs DIR]".format(a))
     if target is None:
         sys.exit("picchio monitor: give a llama-server url or an ollama tag, "
-                 "e.g. picchio.py monitor http://127.0.0.1:8080  or  "
-                 "picchio.py monitor qwen3.5:9b")
+                 "e.g. picchio monitor http://127.0.0.1:8080  or  "
+                 "picchio monitor qwen3.5:9b")
     mode = monitor_target_mode(target)
     if mode is None:
         sys.exit("picchio monitor: {!r} looks like a file; monitor watches a "
                  "running server. Give a url (http://host:port) or an ollama "
                  "tag.".format(target))
-    monitor(target, mode, every, dur, keep, as_json)
+    monitor(target, mode, every, dur, keep, as_json, residency)
 
 
 # --------------------------------------------------------------- ctx sweep
@@ -3093,6 +3829,10 @@ def ctx_sweep(model, mode, binpath, engine_str, model_name, tiers, passes, lp):
             len(tiers) * passes, len(tiers), passes))
     for ctx in tiers:
         prompt = sweep_prompt(int(ctx * 0.7))  # leave headroom for 128 gen
+        # one meter per tier, not one for the sweep: the question is how
+        # much memory each depth costs, and a single figure spanning
+        # every tier would answer only the deepest one
+        sampler = telemetry_start()
         ps = []
         for i in range(passes):
             sys.stderr.write("picchio: ctx {} pass {}/{}{} ...\n".format(
@@ -3110,15 +3850,25 @@ def ctx_sweep(model, mode, binpath, engine_str, model_name, tiers, passes, lp):
             # it per pass so the sweep table can be replayed like a verdict
             keep_log(lp("ctx{}.pass{}.meta.json".format(ctx, i + 1)),
                      json.dumps({"wall_s": p["wall_s"]}, indent=1))
+            if isinstance(sampler, GpuSampler):
+                sampler.mark_pass(p)
             ps.append(p)
+        tele = sampler.stop() if isinstance(sampler, GpuSampler) \
+            else dict(sampler)
         rep = build_rep(ps)
         rows.append({"ctx": ctx, "depth": rep.get("prompt_tokens"),
                      "prefill": rep["prefill_toks"],
                      "decode": rep["decode_toks"],
-                     "wallclock": rep["wallclock_toks"]})
+                     "wallclock": rep["wallclock_toks"],
+                     # absent stays absent: a tier the meter could not
+                     # read prints blank, never a zero anyone could
+                     # average or plot as "no memory used"
+                     "mem": tele.get("mem_step"),
+                     "mem_src": tele.get("src") or tele.get("off")})
     keep_log(lp("sweep.meta.json"), json.dumps(
         {"engine": engine_str, "model_name": model_name, "mode": mode,
-         "tiers": tiers, "passes": passes}, indent=1))
+         "tiers": tiers, "passes": passes,
+         "mem": {str(r["ctx"]): r.get("mem") for r in rows}}, indent=1))
     return rows
 
 
@@ -3145,14 +3895,25 @@ def sweep_slope(rows):
 
 
 def render_sweep(mach, engine_str, model_name, rows):
+    # The memory column appears only when a meter answered for at least
+    # one tier. A replay of a run recorded before the sweep sampled
+    # memory renders exactly as it did then, the same way the verdict
+    # block's os line is absent rather than empty on old fixtures.
+    mem = any(r.get("mem") is not None for r in rows)
+    head = "{:<15}{:>12}  {:>12}  {:>12}".format(
+        "depth   ctx", "prefill", "decode", "wallclock")
     out = ["ctx sweep  " + ", ".join(x for x in (model_name, engine_str) if x),
-           "{:<15}{:>12}  {:>12}  {:>12}".format(
-               "depth   ctx", "prefill", "decode", "wallclock")]
+           (head + "  {:>9}".format("mem")) if mem else head]
     for r in rows:
-        out.append("{:<15}{:>12}  {:>12}  {:>12}".format(
+        line = "{:<15}{:>12}  {:>12}  {:>12}".format(
             "{:>6}  {}".format(r["depth"] if r["depth"] else "?", r["ctx"]),
             fmt_rate(r["prefill"]), fmt_rate(r["decode"]),
-            fmt_rate(r["wallclock"])))
+            fmt_rate(r["wallclock"]))
+        if mem:
+            step = r.get("mem")
+            line += "  {:>9}".format(
+                "+{:.1f} GiB".format(step / 1024 ** 3) if step else "")
+        out.append(line.rstrip())
     slope = sweep_slope(rows)
     if slope:
         out += textwrap.wrap("SLOPE: " + slope, width=WIDTH,
@@ -3172,7 +3933,7 @@ def render_sweep(mach, engine_str, model_name, rows):
 # is only ever a projection of this machine's own last measured run;
 # with no run cached there is no number at all, because an estimate
 # with no measurement behind it is a guess wearing digits. Nothing plan
-# prints is a verdict block: no 15 line protocol, no mp1 footer, so a
+# prints is a verdict block: no fixed line budget, no mp1 footer, so a
 # projection can never be pasted somewhere a measurement belongs.
 
 GGUF_TYPES = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
@@ -3475,7 +4236,7 @@ def render_plan_scan(rows, budget, blabel, bw, speed_note):
 
 def plan_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py plan [MODEL]\n"
+        print("usage: picchio plan [MODEL]\n"
               "the capacity account before you download or load: will it\n"
               "fit (gguf header geometry against this machine's memory\n"
               "budget), and, once one real diagnosis has been run here,\n"
@@ -3484,7 +4245,7 @@ def plan_cli(argv):
               "never appear in a verdict block.")
         sys.exit(0)
     if len(argv) > 1:
-        sys.exit("picchio plan: usage: picchio.py plan [MODEL]")
+        sys.exit("picchio plan: usage: picchio plan [MODEL]")
     mach = machine_info()
     budget, blabel = plan_budget(mach)
     bw, speed_note = plan_speed_source(load_cache())
@@ -3568,6 +4329,99 @@ LLAMA_FTYPES = {
     31: "IQ1_M", 32: "BF16", 36: "TQ1_0", 37: "TQ2_0",
     38: "MXFP4_MOE", 39: "NVFP4", 40: "Q1_0",
 }
+
+
+# The metadata keys a gguf can carry that say where the file came from
+# and who produced it. A fixed list, matched exactly, because a looser
+# rule ("any key with url in it") drags in the license link and the
+# tokenizer homepage, neither of which identifies the quantizer. The
+# indexed base_model rows are the upstream weights this file was made
+# from; row 0 is the only one every published file fills in.
+ID_SOURCE_KEYS = (
+    "general.quantized_by",
+    "general.repo_url",
+    "general.source.url",
+    "general.source.repo_url",
+    "general.source.huggingface.repository",
+    "general.organization",
+    "general.base_model.0.repo_url",
+    "general.base_model.0.organization",
+)
+
+
+def file_identity(path, chunk=1 << 22):
+    """(sha256 hex, bytes read) over the whole file.
+
+    The whole file, not a sampled fingerprint. Two reasons, and the
+    second is the load bearing one. First, a head-and-tail fingerprint
+    cannot notice an edit in the middle, and the point of this line is
+    that any byte difference shows up. Second, the full sha256 is
+    already the identity anchor everyone else uses: it is the oid
+    HuggingFace stores for an LFS object and it is the name ollama gives
+    the blob on disk, so this number can be checked against a registry
+    nobody had to teach picchio about. A private fingerprint would be a
+    number only picchio can read, which is the opposite of the job.
+
+    Measured here at 2.28 GiB/s, so a 5 GiB file costs about 2 s and a
+    22 GiB one about 10 s. The caller says so before it starts."""
+    h = hashlib.sha256()
+    n = 0
+    with open(path, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+            n += len(b)
+    return h.hexdigest(), n
+
+
+def file_fingerprint(path, emit=None):
+    """(sha256 hex, byte count) for a file, or (None, reason).
+
+    Announces itself first: several gigabytes of reading is a few
+    seconds of nothing happening, and a card that returns instantly
+    every other time looks hung rather than busy."""
+    if not path:
+        return None, "no file to read"
+    if emit:
+        emit("picchio: reading {} to fingerprint it\n".format(
+            os.path.basename(path)))
+    try:
+        return file_identity(path)
+    except OSError as e:
+        return None, "{} could not be read in full ({})".format(
+            os.path.basename(path), e)
+
+
+def id_file_note(path, emit=None):
+    """The identity line's text for a file on disk, or a note saying why
+    there is none. Two people running this on the same bytes get the
+    same string, character for character."""
+    if not path:
+        return None
+    digest, nbytes = file_fingerprint(path, emit)
+    if digest is None:
+        return "not recorded: {}".format(nbytes)
+    return "sha256 {}, {:,} bytes".format(digest[:12], nbytes)
+
+
+def gguf_source_note(meta):
+    """What the file says about its own origin, quoted as written.
+
+    Every value here is the file talking about itself. Nothing in a gguf
+    header is signed and picchio does not go to the network, so this is
+    a claim to be repeated, never a provenance check that passed."""
+    parts = []
+    for key in ID_SOURCE_KEYS:
+        v = (meta or {}).get(key)
+        if isinstance(v, str) and v.strip():
+            parts.append("{} {}".format(key[len("general."):], v.strip()))
+    if not parts:
+        return ("not recorded: this file carries no origin keys, so who "
+                "produced it cannot be read off the file")
+    return "; ".join(parts) + " (the file's own claim, verified " \
+        "against nothing)"
 
 
 def gguf_tensor_table(f, n_tensors):
@@ -3673,6 +4527,21 @@ def id_experts(meta, tensors, elems):
     return used, int(count), active
 
 
+def id_walk_file(path):
+    """(metadata, tensor descriptors, priced account) for a gguf on
+    disk. The one place a file gets walked and priced, so the identity
+    card and the share formats can never disagree about a model's
+    effective bits per weight. Raises the same errors id_account does
+    rather than returning a partial answer."""
+    with open(path, "rb") as f:
+        meta = gguf_meta_stream(f)
+        tensors, hdr_end = gguf_tensor_table(f, meta.get("__tensor_count", 0))
+    align = int(meta.get("general.alignment") or 32)
+    data_start = (hdr_end + align - 1) // align * align
+    acct = id_account(tensors, os.path.getsize(path) - data_start, align)
+    return meta, tensors, acct
+
+
 def id_claim(recipe, name):
     """What the model says it is before any walking: the declared
     recipe name against the quant token the file or tag name carries.
@@ -3721,11 +4590,22 @@ def _id_wrap(label, text):
                          subsequent_indent=" " * 13)
 
 
-def render_id(name, claim, acct, moe, kv_note, audit_note):
-    """The identity card: claim, walked mixture, effective bits per
-    weight, then the axes the file cannot carry. Information card
-    contract, same as plan: no 15 line block, no mp1 footer."""
+def render_id(name, claim, acct, moe, kv_note, audit_note,
+              file_note=None, source_note=None):
+    """The identity card: which bytes, who says they made them, what
+    they claim to be, then the walked mixture, effective bits per
+    weight, and the axes the file cannot carry. Information card
+    contract, same as plan: no fixed line budget, no mp1 footer.
+
+    The file and source lines come first because they answer the
+    question the rest of the card assumes: two people comparing decode
+    rates for "the same Q4_K_M" have to establish that it is the same
+    file before any of the numbers below mean anything."""
     out = ["picchio id: " + name]
+    if file_note:
+        out += _id_wrap("file", file_note)
+    if source_note:
+        out += _id_wrap("source", source_note)
     out += _id_wrap("claimed", claim)
     if not acct:
         out += _id_wrap("walked", "nothing: {}. The per tensor mix "
@@ -3758,7 +4638,7 @@ def render_id(name, claim, acct, moe, kv_note, audit_note):
 
 def id_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio.py id MODEL\n"
+        print("usage: picchio id MODEL\n"
               "split the quant label into the three axes it hides: the\n"
               "per tensor type mix priced into one effective bits per\n"
               "weight figure (walked from the gguf tensor table, offsets\n"
@@ -3769,7 +4649,7 @@ def id_cli(argv):
               "of the same table. Read only, never a verdict.")
         sys.exit(0)
     if len(argv) != 1:
-        sys.exit("picchio id: usage: picchio.py id MODEL (a .gguf path "
+        sys.exit("picchio id: usage: picchio id MODEL (a .gguf path "
                  "or an ollama tag)")
     arg = argv[0]
     if os.path.isfile(arg):
@@ -3777,22 +4657,19 @@ def id_cli(argv):
             load_cache(), measurement_key("llama.cpp", arg), arg))
         name = os.path.basename(arg)
         try:
-            with open(arg, "rb") as f:
-                meta = gguf_meta_stream(f)
-                tensors, hdr_end = gguf_tensor_table(
-                    f, meta.get("__tensor_count", 0))
-            align = int(meta.get("general.alignment") or 32)
-            data_start = (hdr_end + align - 1) // align * align
-            acct = id_account(tensors, os.path.getsize(arg) - data_start,
-                              align)
+            meta, tensors, acct = id_walk_file(arg)
         except (ValueError, struct.error, OSError) as e:
             sys.exit("picchio id: {}: {}".format(name, e))
         claim = id_claim(
             LLAMA_FTYPES.get(meta.get("general.file_type")), name)
+        # after the header parsed: no point reading 22 GiB of something
+        # that turned out not to be a gguf at all
         print(render_id(name, claim, acct,
                         id_experts(meta, tensors, acct[1]), kv_note,
                         "the header's own offsets audit to the same "
-                        "byte total"))
+                        "byte total",
+                        id_file_note(arg, sys.stderr.write),
+                        gguf_source_note(meta)))
         sys.exit(0)
     if not looks_like_tag(arg):
         sys.exit("picchio id: no such file: {}".format(arg))
@@ -3810,6 +4687,18 @@ def id_cli(argv):
     recipe = LLAMA_FTYPES.get(mi.get("general.file_type")) \
         or (show.get("details") or {}).get("quantization_level")
     claim = id_claim(recipe, arg)
+    # the api reports sizes, not paths, so the blob behind the tag comes
+    # from the manifest on disk; a remote ollama has none here to read
+    local = ollama_host_is_local()
+    blob = ollama_model_path(arg) if local else None
+    file_note = id_file_note(blob, sys.stderr.write)
+    if not file_note:
+        file_note = "not recorded: " + (
+            "no local blob for this tag under ~/.ollama/models"
+            if local else
+            "this ollama serves from {}, whose blobs are not on this "
+            "disk".format(OLLAMA_HOST))
+    source_note = gguf_source_note(mi)
     try:
         if not show.get("tensors"):
             raise ValueError("this ollama api answered without a "
@@ -3817,11 +4706,171 @@ def id_cli(argv):
         tensors = ollama_tensor_table(show["tensors"])
         acct = id_account(tensors)
     except ValueError as e:
-        print(render_id(arg, claim, None, None, kv_note, str(e)))
+        print(render_id(arg, claim, None, None, kv_note, str(e),
+                        file_note, source_note))
         sys.exit(0)
     print(render_id(arg, claim, acct, id_experts(mi, tensors, acct[1]),
                     kv_note, "typed shapes from the api, which mirrors "
-                    "the table without offsets, so no offset audit"))
+                    "the table without offsets, so no offset audit",
+                    file_note, source_note))
+    sys.exit(0)
+
+
+# ------------------------------------------------------------------ share
+#
+# picchio share reformats a block that already exists. It measures
+# nothing and it decides nothing; every value it prints was read out of
+# the block it was handed, or walked out of the model file that block
+# names. It exists because the full block is right for a bug
+# report and heavy for a comment, and the argument about that on
+# r/LocalLLaMA ended in a standoff: one side hand pasting llama-bench
+# tables, the other saying that if posting needs a paper they will not
+# post. Nobody offered a third option. These are the three options.
+#
+# The skeleton fills in what can be measured and leaves the opinion
+# blank. A tool that writes your conclusion for you is a tool that has
+# started deciding what your numbers mean.
+#
+# What lives here is the gathering: the gguf walk, the cache lookup and
+# the argument parsing. How any of it reads is picchio_core.share.
+
+
+def share_identity(model, emit=None):
+    """quant, effective bits per weight and file identity for a model,
+    from the same walk the id card does. Read only, and not a
+    measurement: nothing here starts an engine. Fields a source cannot
+    answer come back absent rather than guessed."""
+    if not model:
+        return {}
+    if os.path.isfile(model):
+        try:
+            meta, tensors, acct = id_walk_file(model)
+        except (ValueError, struct.error, OSError) as e:
+            if emit:
+                emit("picchio share: {} could not be walked: {}\n".format(
+                    os.path.basename(model), e))
+            return {}
+        hist, elems, total = acct
+        digest, nbytes = file_fingerprint(model, emit)
+        return {"quant": LLAMA_FTYPES.get(meta.get("general.file_type")),
+                "bpw": total * 8.0 / elems, "mode": "llama.cpp",
+                "sha256": digest,
+                "bytes": nbytes if digest else None}
+    if not looks_like_tag(model) or not ollama_reachable():
+        return {}
+    try:
+        show = ollama_api("/api/show", {"model": model}, timeout=15)
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
+    mi = show.get("model_info") or {}
+    out = {"quant": LLAMA_FTYPES.get(mi.get("general.file_type"))
+           or (show.get("details") or {}).get("quantization_level"),
+           "mode": "ollama"}
+    if ollama_host_is_local():
+        digest, nbytes = file_fingerprint(ollama_model_path(model), emit)
+        if digest:
+            out["sha256"], out["bytes"] = digest, nbytes
+    try:
+        _h, elems, total = id_account(ollama_tensor_table(
+            show.get("tensors") or []))
+        out["bpw"] = total * 8.0 / elems
+    except ValueError:
+        pass
+    return out
+
+
+def share_facts(b, model=None, emit=None):
+    """Every field the three formats print, gathered once so they
+    cannot disagree with each other. The block supplies what a run
+    measured; the model file supplies what a file is. Anything neither
+    can answer is n/a, which is a reading, not a blank."""
+    ident = share_identity(model, emit)
+    kv = None
+    if model and ident.get("mode"):
+        rec = cache_for_measurement(
+            load_cache(), measurement_key(ident["mode"], model), model)
+        if rec and rec.get("kv_types"):
+            kv = "/".join(rec["kv_types"])
+    pp, tg, wall = (b.get("rates") or [None] * 3)[:3]
+    return {
+        "model": b.get("model"),
+        # the file's own recipe name beats the quant token guessed out
+        # of a filename, and disagreement between them is exactly what
+        # the id card exists to surface
+        "quant": ident.get("quant") or b.get("quant"),
+        "bpw": ident.get("bpw"),
+        "sha256": ident.get("sha256"),
+        "bytes": ident.get("bytes"),
+        "engine": b.get("engine"),
+        "machine": "{}, {} GB".format(b["chip"], b["ram"])
+        if b.get("chip") else None,
+        "ctx": b.get("ctx"),
+        "kv": kv,
+        "settings": b.get("settings"),
+        "pp": pp, "tg": tg, "wallclock": wall,
+        "verdict": b.get("verdict"),
+        "place": b.get("place"),
+        "os_raw": b.get("os_raw"),
+        "protocol": b.get("protocol"),
+        "row": b.get("row"),
+    }
+
+
+def warn_share_missing(facts, model):
+    miss = share_missing(facts)
+    if miss:
+        # stdout stays exactly the artifact; the coaching goes where the
+        # rest of picchio's human output goes
+        sys.stderr.write(
+            "picchio share: {} came back n/a{}\n".format(
+                ", ".join(miss),
+                "; run with --model MODEL to fill the file side"
+                if not model else ""))
+
+
+def share_cli(argv):
+    if argv[:1] in (["-h"], ["--help"]):
+        print("usage: picchio share [BLOCK] [--model MODEL]\n"
+              "                        [--line | --row | --post]\n"
+              "reformat a verdict block you already have into something\n"
+              "postable. --line is one line for a comment, --row is a\n"
+              "markdown table row, --post is a full post skeleton with\n"
+              "the specs filled in and the opinion left blank. BLOCK is\n"
+              "a saved block or stdin. --model points at the .gguf or\n"
+              "ollama tag the block measured, which adds the effective\n"
+              "bits per weight, the file identity and the kv dtype; the\n"
+              "file is walked and hashed, never run. Nothing here is\n"
+              "measured and no field is filled in by guessing.")
+        sys.exit(0)
+    mode, model, path = "line", None, None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--line", "--row", "--post"):
+            mode = a[2:]
+        elif a == "--model" and i + 1 < len(argv):
+            i += 1
+            model = argv[i]
+        elif a.startswith("-") and a != "-":
+            sys.exit("picchio share: unknown option {}".format(a))
+        elif path is None:
+            path = a
+        else:
+            sys.exit("picchio share: one block at a time")
+        i += 1
+    try:
+        text = sys.stdin.read() if path in (None, "-") \
+            else open(path).read()
+    except OSError as e:
+        sys.exit("picchio share: {}".format(e))
+    b = parse_block(text)
+    if not b:
+        sys.exit("picchio share: no picchio block found in {}. Save one "
+                 "with: {} MODEL > block.txt".format(
+                     path or "stdin", invocation()))
+    f = share_facts(b, model, sys.stderr.write)
+    print(render_share(f, text, mode))
+    warn_share_missing(f, model)
     sys.exit(0)
 
 
@@ -3843,6 +4892,26 @@ def selftest():
                 for i, d in enumerate([1, 0, 2, 1])]
         cpu = dict(blank_pass(), offload_n=0, offload_total=33,
                    prefill_toks=27.0, decode_toks=12.0)
+        # a five digit prefill packs the lane column down to one space
+        # after the label, and a model sized memory step is residency
+        # evidence the offline judge has to honor. Both came off a real
+        # RTX 5090 box; both ship in the single file build because a
+        # curl'd picchio has no fixtures to replay.
+        tight_warm = parse_block(
+            "model    test, 1.0 B, Q4_K_M, 1.0 GiB, llama.cpp b1\n"
+            "gpu      ENGAGED: 1/1 layers on GPU\n"
+            "os       gpu idle 0%, work 99%, mem +1.0 GiB\n"
+            "ctx 4096         prefill         decode      wallclock\n"
+            "  cold         2.0 tok/s      1.0 tok/s      0.5 tok/s\n"
+            "  warm mid 100.0 tok/s      5.0 tok/s      4.0 tok/s\n"
+            "VERDICT: HEALTHY. synthetic\n")
+        resident = parse_block(
+            "model    test, 1.0 B, Q4_K_M, 5.0 GiB, llama.cpp b1\n"
+            "gpu      ENGAGED: 1/1 layers on GPU\n"
+            "os       gpu idle 0%, work 0%, mem +5.0 GiB\n"
+            "ctx 4096         prefill         decode      wallclock\n"
+            "  warm mid  100.0 tok/s      5.0 tok/s      4.0 tok/s\n"
+            "VERDICT: HEALTHY. synthetic\n")
         checks = [
             monitor_classify(588.0, 21.1)[0] == "OK",
             monitor_classify(26.8, 12.2)[0] == "FLAG",
@@ -3854,6 +4923,9 @@ def selftest():
             watch_verdict(watch_summary(flat), None)[0] == "GPU IDLE",
             parse_engine_version("version: 9430 (d48a56ef)") == "b9430",
             diagnose(cpu, cpu, "llama.cpp")[0] == "SILENT CPU FALLBACK",
+            tight_warm["row"] == "warm mid"
+            and tight_warm["rates"] == [100.0, 5.0, 4.0],
+            verify_block(resident)[0] == "PASS",
             # the runaway guard: a flood is capped and killed, not buffered
             _run_capped([sys.executable, "-c", "print('x' * 2000000)"],
                         10, 500000).capped,
@@ -3895,6 +4967,8 @@ def selftest():
                 mode = "ollama"
             else:
                 break
+            # the artifact answers the same question its live run did
+            p["nonce"] = meta.get("prompt_nonce")
             if p["prefill_toks"] and p["decode_toks"] and p["wallclock_toks"]:
                 fx_ok += 1
             passes.append(p)
@@ -3909,7 +4983,22 @@ def selftest():
         tele = None  # raw dirs that predate the sampler have no curve
         tj = os.path.join(d, "telemetry.json")
         if os.path.exists(tj):
-            tele = json.load(open(tj)).get("summary")
+            raw = json.load(open(tj))
+            tele = raw.get("summary")
+            if raw.get("samples") and raw.get("marks"):
+                # the committed curve is the evidence and the summary
+                # beside it is one derivation of that curve, so the
+                # replay redoes the derivation instead of trusting a
+                # cached one. Every stored field reproduces exactly;
+                # what this buys is that a new figure computed from the
+                # same samples appears in the replay too, rather than
+                # needing the fixtures recaptured on a machine with a
+                # gpu meter. throttled and src are sampler state, not
+                # derivations, so they are read, not recomputed.
+                tele = telemetry_summary(
+                    raw["samples"], raw["marks"],
+                    (tele or {}).get("throttled", False),
+                    (tele or {}).get("src"))
         rep = build_rep(passes)
         state, para = diagnose(passes[0], rep, mode, tele)
         extra = metas[0].get("extra_args", [])
@@ -3953,10 +5042,11 @@ def selftest():
         cp_ok += 1
     # telemetry: synthetic timelines pushed through the real window
     # math and the real three source judge (no gpu needed, ci safe)
-    te_ok, te_all = 0, 6
+    te_ok, te_all = 0, 9
     gib = 1024 ** 3
 
-    def synth_tele(idle_dev, work_dev, mem_base, mem_peak, src=None):
+    def synth_tele(idle_dev, work_dev, mem_base, mem_peak, src=None,
+                   idle_w=0.02):
         # one 11.2 s pass after a 1.2 s baseline, ticked at 4 Hz; busy
         # samples land exactly in the tail aligned compute window
         t_end, wall, load_s, prompt_s, eval_s = 12.4, 11.2, 2.0, 1.3, 6.3
@@ -3968,7 +5058,7 @@ def selftest():
             samples.append({
                 "t": t,
                 "dev": work_dev if in_work else idle_dev,
-                "gpu_w": 10.6 if in_work and work_dev >= 50 else 0.02,
+                "gpu_w": 10.6 if in_work and work_dev >= 50 else idle_w,
                 "mem": mem_peak if t >= t0 + load_s else mem_base})
             t += 0.25
         return telemetry_summary(samples, [{
@@ -3997,6 +5087,47 @@ def selftest():
             and diagnose(fx, fx, "llama.cpp", lifted)[0] == "HEALTHY" \
             and "not judged" in os_line(lifted):
         te_ok += 1
+    # 7: the shape that started this: a Mac desktop drawing at 30%
+    #    utilization and 0.4 W before pass 1. Utilization alone called
+    #    that busy and threw away the whole os vote, energy included.
+    #    Watts say it never computed, so the run is judged, and the
+    #    block carries the sentence that says why it was judged.
+    desk = synth_tele(30, 99, 600 * 1024 ** 2, int(7.0 * gib),
+                      src="ioreg", idle_w=0.4)
+    note = pre_run_idle(desk)[1]
+    # the paragraph is wrapped, so the block is flattened before the
+    # sentence is looked for: that checks it survived wrapping whole
+    # rather than that some fragment of it is in there somewhere
+    blk = " ".join(render_verdict(
+        machine_info(), "llama.cpp b1", "m", [fx, fx, fx], "HEALTHY",
+        "Placement checks out.", "llama.cpp", None, False, None,
+        CTX, [], desk).split())
+    if telemetry_vote(desk, fx, "llama.cpp") == "agree" \
+            and "idle 30%, work 99%" in os_line(desk, fx) \
+            and "0.53 J/tok" in os_line(desk, fx) \
+            and note and "30% at 0.4 W" in note and note in blk:
+        te_ok += 1
+    # 8: the negative control on the same meter. Same utilization, real
+    #    power behind it, so something was computing and none of it can
+    #    be pinned on this run. Still not idle, and the line now says
+    #    which of the two signals disqualified it.
+    hot = synth_tele(50, 99, 600 * 1024 ** 2, int(7.0 * gib),
+                     src="ioreg", idle_w=12.0)
+    if telemetry_vote(hot, fx, "llama.cpp") == "abstain" \
+            and pre_run_idle(hot) == (False, None) \
+            and "50% at 12.0 W before the run, not idle" in os_line(hot) \
+            and telemetry_read(hot) is None:
+        te_ok += 1
+    # 9: no meter borrows another's watts. A discrete card has its own
+    #    idle draw and nobody has measured one yet, so low watts there
+    #    rescue nothing and the utilization answer stands.
+    other = synth_tele(31, 99, 600 * 1024 ** 2, int(7.0 * gib),
+                       src="nvml", idle_w=0.4)
+    if pre_run_idle(other) == (False, None) \
+            and telemetry_vote(other, fx, "llama.cpp") == "abstain" \
+            and IDLE_W_GATE.get("nvml") is None \
+            and pre_run_idle(dict(desk, src=None)) == (False, None):
+        te_ok += 1
     # 4: the memory step vetoes the flat line contradiction
     stepped = synth_tele(0, 0, 600 * 1024 ** 2, int(6.4 * gib))
     if telemetry_vote(stepped, fx, "llama.cpp") == "abstain":
@@ -4020,10 +5151,23 @@ def selftest():
     # verify: the two committed blocks pass, and blocks tampered by one
     # edit fail. Fixtures are built in memory from the real examples, so
     # no forged block ships in the repo; ha and fb are read above.
-    ve_ok, ve_all = 0, 4
+    ve_ok, ve_all = 0, 7
     if verify_block(parse_block(ha))[0] == "PASS":
         ve_ok += 1
     if verify_block(parse_block(fb))[0] == "PASS":
+        ve_ok += 1
+    # a block whose whole prefill lane abstains is one picchio printed
+    # itself, so it has to read back. It answered "no verdict block
+    # found" until the parser learned the third cell word, which reads
+    # to a user as "your paste is wrong" about the tool's own output.
+    # The committed cached-ollama block is the exhibit; prefill parks as
+    # None, the other two lanes survive, and verify judges on those.
+    ab = open(os.path.join(here, "examples",
+                           "linux-5090-ollama.txt")).read()
+    pab = parse_block(ab)
+    if pab and pab["row"] == "warm mid" and pab["rates"][0] is None \
+            and pab["rates"][1] and pab["rates"][2] \
+            and verify_block(pab)[0] == "PASS":
         ve_ok += 1
     # flip the cpu-fallback block's placement line to claim the full gpu:
     # one edit, and three independent witnesses (the ratio, the os meter,
@@ -4040,6 +5184,24 @@ def selftest():
                  r"\g<1>15.0 tok/s\g<2>21.1 tok/s", ha)
     iv, iff = verify_block(parse_block(inv))
     if iv == "FLAG" and any("outrun" in x for x in iff):
+        ve_ok += 1
+    # 5: a packed warm label leaves one separator before the first
+    #    number. It must still outrank the cold row, or verify silently
+    #    grades a five digit run on its cold pass and calls it a lie.
+    tight = re.sub(r"(?m)^(\s{2}warm mid)\s{2,}", r"\1 ", ha)
+    tp = parse_block(tight)
+    if tp and tp["row"] == "warm mid" \
+            and tp["rates"] == parse_block(ha)["rates"]:
+        ve_ok += 1
+    # 6: the live judge abstains on a flat utilization median when a
+    #    model sized memory step proves the weights landed. Offline
+    #    verification casts the same vote; a bursty gpu whose median
+    #    reads 0 is not thereby a forgery.
+    resident = re.sub(r"(?m)^(os\s+gpu .*work )\d+(%.*)$",
+                      r"\g<1>0\g<2>", ha)
+    rb = parse_block(resident)
+    if rb and os_residency_witness(rb) \
+            and verify_block(rb)[0] == "PASS":
         ve_ok += 1
     # watch: five required synthetic paths through the stable JSON contract
     # and the real machine-level judge (no gpu needed, ci safe)
@@ -4279,6 +5441,89 @@ def selftest():
             and "engine log does not say" in attribute_why(
                 st, se_cl, "llama.cpp", []):
         se_ok += 1
+    # residency: the other half of the placement question. The three
+    # measured series are the real ones from .ai/evidence-residency/;
+    # RAMP and PLATEAU are synthetic and say so, because this machine
+    # could not produce either (20.6 GiB of weights on 32 GiB of ram
+    # means the kernel reclaims faster than a run can ramp).
+    rs_ok, rs_all = 8, 8
+    rs_file = int(20.61 * gib)
+
+    def rs_rows(vals, dec, state="FLAG", vram=None, reported=None,
+                ttft=24300.0):
+        return [{"i": i + 1, "state": state, "rss": int(v * gib),
+                 "decode": dec[i % len(dec)], "ttft_ms": ttft,
+                 "vram": vram, "reported": reported}
+                for i, v in enumerate(vals)]
+
+    def rs_check(cond):
+        return 0 if cond else 1
+
+    # 1: shape is read off thirds, and level never enters it
+    rs_ok -= rs_check(
+        residency_shape([int(x * gib) for x in (1, 1, 1, 2, 2, 2, 3, 3, 3)])[0]
+        == "RAMP"
+        and residency_shape(
+            [int(x * gib) for x in (1, 1, 1, 3, 3, 3, 3, 3, 3)])[0]
+        == "PLATEAU"
+        and residency_shape([int(20.3 * gib)] * 12)[0] == "FLAT"
+        and residency_shape([int(3 * gib)] * 8)[0] == "UNDECIDED")
+    # 2: measured, ollama fully loaded on metal. The trap: rss cannot see
+    #    weights that live in the device pool, and a level test would call
+    #    an ordinary run a streaming runtime
+    dev = rs_rows([3.3] * 12, [30.0], state="OK", vram=int(20.8 * gib),
+                  reported=int(20.8 * gib), ttft=1300.0)
+    st, held, para = residency_verdict(dev, rs_file, "ollama")
+    rs_ok -= rs_check(
+        st == "WEIGHTS ON DEVICE" and held == int(20.8 * gib)
+        and "30 tok/s" in para
+        and residency_verdict(dev, rs_file, "server")[0] == "WEIGHTS ON DEVICE")
+    # 3: measured, cpu mmap on a machine under memory pressure. No
+    #    direction, so no working set, however low the level sits
+    osc = rs_rows([11.5, 5.3, 9.6, 10.2, 7.5, 11.2, 9.7, 11.4, 14.9, 9.2,
+                   7.0, 9.8, 7.1], [6.6, 16.8])
+    st, held, para = residency_verdict(osc, rs_file, "server")
+    rs_ok -= rs_check(st == "NO SETTLED WORKING SET" and "reclaim" in para)
+    # 4: measured, the seven round no-warmup run. This one is the
+    #    regression: an earlier cut judged on decode wobble, and a run
+    #    that crawls uniformly has no wobble, so 4 tok/s with fifty
+    #    second first tokens was told it "really did need less than the
+    #    file". Too few rounds to read a shape is the honest answer
+    few = rs_rows([5.0, 4.1, 3.5, 5.3, 3.6, 4.1, 4.5], [4.0], ttft=50600.0)
+    st, held, para = residency_verdict(few, rs_file, "server")
+    rs_ok -= rs_check(st == "NO SETTLED WORKING SET" and "too few" in para
+                      and "4 tok/s" in para and "50.6 s" in para)
+    # 5: synthetic. A bounded cache is the one shape that earns a
+    #    quotable figure, and the figure is the plateau not the median
+    plat = rs_rows([1.0, 1.2, 1.1, 6.0, 6.1, 6.0, 6.1, 6.0, 6.1], [20.0])
+    st, held, para = residency_verdict(plat, rs_file, "server")
+    rs_ok -= rs_check(st == "BOUNDED WORKING SET"
+                      and abs(held - 6.1 * gib) < 0.2 * gib
+                      and "stopped climbing" in para)
+    # 6: synthetic. Still climbing means nothing here is quotable, even
+    #    though the level would look excellent screenshotted early
+    ramp = rs_rows([2.0, 2.4, 2.9, 3.4, 3.9, 4.4, 4.9, 5.4, 5.9], [20.0])
+    st, held, para = residency_verdict(ramp, rs_file, "server")
+    rs_ok -= rs_check(st == "NO SETTLED WORKING SET"
+                      and "still climbing" in para)
+    # 7: fully resident is the model itself
+    cap = rs_rows([20.4] * 12, [32.0], ttft=900.0)
+    st, held, para = residency_verdict(cap, rs_file, "server")
+    rs_ok -= rs_check(st == "CAPACITY" and "is the model" in para)
+    # 8: probes vary in content and not in length, or one mixture of
+    #    experts answers every round and the curve never moves; and
+    #    nothing serving the file means no pid, not a guessed one
+    plen = {len(residency_prompt(i).split()) for i in range(12)}
+    rs_ok -= rs_check(
+        len(plen) == 1 and plen.pop() == len(BENCH_PROMPT.split())
+        and len({residency_prompt(i) for i in range(10)}) == 10
+        and residency_verdict(few[:RES_MIN_PROBES - 1], rs_file,
+                              "server") is None
+        and residency_verdict(osc, None, "server")[0]
+        == "NO RESIDENCY EVIDENCE"
+        and engine_pid_for(os.path.join(here, "no-such.gguf")) is None
+        and engine_pid_for(None) is None)
+
     # locale: llama.cpp prints its numbers through the machine's locale,
     # so on a comma decimal box every timing regex used to miss and the
     # whole lane table came back n/a (issue #1). Same log, two decimal
@@ -4534,15 +5779,17 @@ def selftest():
     # same walk, account and expert arithmetic used live (the big real
     # files stay out of ci; they are the manual acceptance step). The
     # engine side of the cross check reads the committed real stderr.
-    id_ok, id_all = 0, 9
+    id_ok, id_all = 0, 12
 
-    def synth_id_img(specs, kvs):
+    def synth_id_img(specs, kvs, strings=()):
         # a minimal legal gguf v3 image: kv section, tensor table,
         # data section sized and aligned exactly like the real files
         arch = "synthmoe"
         pairs = [("general.architecture", 8,
                   struct.pack("<Q", len(arch)) + arch.encode()),
                  ("general.file_type", 4, struct.pack("<I", 15))]
+        pairs += [(k, 8, struct.pack("<Q", len(v)) + v.encode())
+                  for k, v in strings]
         pairs += [(arch + "." + k, 4, struct.pack("<I", v))
                   for k, v in kvs]
         kvb = b"".join(struct.pack("<Q", len(k)) + k.encode()
@@ -4660,6 +5907,361 @@ def selftest():
                 cr, measurement_key("ollama", "missing:latest"),
                 "missing:latest") is None:
         id_ok += 1
+    # 10: the identity line is sha256 over every byte plus the exact
+    #     count, so two people holding the same file print the same
+    #     string. Written to a real file, then checked against hashlib
+    #     over the same bytes.
+    idimg = synth_id_img(
+        [("blk.0.attn_q.weight", (256, 4), 12)], [],
+        [("general.quantized_by", "SomeQuantizer"),
+         ("general.repo_url", "https://example.invalid/who")])
+    iddir = tempfile.mkdtemp(prefix="picchio-id-")
+    idp = os.path.join(iddir, "synth.gguf")
+    with open(idp, "wb") as f:
+        f.write(idimg)
+    want_id = "sha256 {}, {:,} bytes".format(
+        hashlib.sha256(idimg).hexdigest()[:12], len(idimg))
+    if id_file_note(idp) == want_id:
+        id_ok += 1
+    # 11: the same bytes twice give the same line; one byte flipped in
+    #     the middle gives a different one at an identical file size.
+    #     The middle is the whole point. A head-and-tail fingerprint
+    #     would call these two files the same file, and a same-size
+    #     different-content pair is not hypothetical: the ollama blob
+    #     for qwen3.5:9b and the unsloth gguf in examples/quantizers
+    #     share a byte count and do not share a digest.
+    mid = len(idimg) // 2
+    flip = idimg[:mid] + bytes([idimg[mid] ^ 0xFF]) + idimg[mid + 1:]
+    idp2 = os.path.join(iddir, "flipped.gguf")
+    with open(idp2, "wb") as f:
+        f.write(flip)
+    if id_file_note(idp) == want_id and len(flip) == len(idimg) \
+            and id_file_note(idp2) != want_id:
+        id_ok += 1
+    # 12: origin keys are quoted as written and labeled unverified; a
+    #     file carrying none says so rather than naming a likely author
+    idsrc = gguf_source_note(gguf_meta_stream(io.BytesIO(idimg)))
+    idbare = gguf_source_note(gguf_meta_stream(io.BytesIO(img)))
+    if "quantized_by SomeQuantizer" in idsrc \
+            and "repo_url https://example.invalid/who" in idsrc \
+            and "verified against nothing" in idsrc \
+            and idbare.startswith("not recorded") \
+            and "no origin keys" in idbare:
+        id_ok += 1
+    shutil.rmtree(iddir, ignore_errors=True)
+    # settings: the disclosure line. Every value on it was already in a
+    # log picchio was parsing anyway, so the whole group is about
+    # repeating them without inventing any, and about saying which
+    # surface stayed quiet when one does.
+    st_ok, st_all = 0, 7
+    # 1: llama.cpp's own log, read field by field against what the
+    #    committed stderr literally prints (sampler seed: 7 and
+    #    "top_k = 40, top_p = 0.950, min_p = 0.050, ..., temp = 0.800")
+    if hp["sampling"] == {"seed": 7, "top_k": 40.0, "top_p": 0.95,
+                          "min_p": 0.05, "temp": 0.8} \
+            and settings_line(hp, "llama.cpp") \
+            == "temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7":
+        st_ok += 1
+    # 1b: counts print as counts and continuous knobs keep a decimal.
+    #     Not cosmetic: Qwen3.6-35B-A3B ships general.sampling.temp = 1.0
+    #     and general.sampling.top_k = 20 in its own header, llama.cpp
+    #     honors both, and the same picchio command therefore sampled
+    #     that model at temp 1.0 where the 9B ran llama.cpp's 0.8
+    #     default. A "temp 1" in that block would read like a count.
+    if settings_line({"sampling": {"temp": 1.0, "top_k": 20, "top_p": 0.95,
+                                   "min_p": 0.05, "seed": 7}},
+                     "llama.cpp") \
+            == "temp 1.0, top-k 20, top-p 0.95, min-p 0.05, seed 7":
+        st_ok += 1
+    # 2: the list separator is not a decimal point. "top_p = 0.950,"
+    #    ends on a comma, and a value group allowed to end on one hands
+    #    _num a thousands separator to undo, which returns 950. This
+    #    shipped for exactly one test run before this check existed.
+    if parse_stderr("top_k = 40, top_p = 0.950, min_p = 0.050, "
+                    "typical_p = 1.000, temp = 0.800", 1.0)["sampling"] \
+            == {"top_k": 40.0, "top_p": 0.95, "min_p": 0.05,
+                "temp": 0.8}:
+        st_ok += 1
+    # 3: the server echoes the same settings under its own names, as
+    #    floats that survived a json round trip (0.800000011920929).
+    #    One line renders both engines and neither shows sixteen digits.
+    sv = map_server(json.load(open(os.path.join(
+        rawroot, "server-endpoint", "pass1.response.json"))), 9.0)
+    if settings_line(sv, "server") \
+            == "temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7":
+        st_ok += 1
+    # 4: ollama's generate api returns no sampling at all. The line says
+    #    not recorded and names the surface that was read; it never
+    #    fills in llama.cpp's 0.8 default on ollama's behalf, which
+    #    would be the one number in the block a reader could not trust.
+    ol = map_ollama(json.load(open(os.path.join(
+        rawroot, "ollama-qwen35", "pass1.response.json"))), 10.0, None)
+    olline = settings_line(ol, "ollama")
+    if ol["sampling"] is None and olline.startswith("not recorded") \
+            and "ollama api" in olline and "temp" not in olline:
+        st_ok += 1
+    # 5: whichever engine stayed quiet, the line still fits the block.
+    #    Same discipline as the os line's reasons: the text comes from
+    #    a table that grows, so the width is checked, not remembered.
+    if all(len("settings " + settings_line({}, mode)) <= WIDTH
+           for mode in list(NO_SAMPLING) + ["something new"]):
+        st_ok += 1
+    # 6: guard echoes the command it is judging, quoted well enough to
+    #    paste back into a shell. Everything else guard prints is about
+    #    these arguments and cannot be read without them.
+    gcmd = ["llama-completion", "-m", "/tmp/models/Qwen3.5-9B-Q4_K_M.gguf",
+            "-p", "Say hi.", "-ngl", "0"]
+    gecho = "picchio guard: command: {}".format(
+        " ".join(shlex.quote(a) for a in gcmd))
+    if "'Say hi.'" in gecho and "-ngl 0" in gecho \
+            and gecho.count("llama-completion") == 1:
+        st_ok += 1
+    # energy: joules per generated token, priced off the decode window
+    # only and recomputable by hand from the committed curve
+    en_ok, en_all = 0, 4
+    entele = json.load(open(os.path.join(
+        rawroot, "healthy-metal", "telemetry.json")))
+    ensum = telemetry_summary(entele["samples"], entele["marks"])
+    # 1: an independent recompute of the same figure straight off the
+    #    raw samples: median watts inside each decode window, over the
+    #    warm median decode rate the lane table prints. Same arithmetic
+    #    anyone reading the block can redo with a calculator.
+    enwin = []
+    for mk in entele["marks"]:
+        d1 = mk["t_end"] - TELE_PAD_S
+        d0 = d1 - mk["eval_s"]
+        enwin += [s["gpu_w"] for s in entele["samples"]
+                  if d0 <= s["t"] <= d1 and s.get("gpu_w") is not None]
+    enrep = {"decode_toks": 21.1}
+    if abs(energy_per_token(ensum, enrep)
+           - statistics.median(enwin) / 21.1) < 1e-9 \
+            and "0.52 J/tok" in os_line(ensum, enrep):
+        en_ok += 1
+    # 2: the decode window is not the compute window. Prefill drives the
+    #    gpu harder than decode does, so pricing a generated token off
+    #    the combined median would bill decode for prefill's bursts.
+    if ensum["dec_w"] is not None and ensum["work_w"] is not None \
+            and ensum["dec_w"] < ensum["work_w"] \
+            and ensum["dec_n"] < ensum["work_n"]:
+        en_ok += 1
+    # 3: sampled, but the power channel gave nothing. macOS reads watts
+    #    out of a private framework that can vanish on an os update, and
+    #    a field that disappears with its meter looks exactly like a
+    #    field nobody printed. It says n/a instead.
+    now = telemetry_summary(
+        [dict(s, gpu_w=None) for s in entele["samples"]], entele["marks"])
+    if energy_per_token(now, enrep) is None \
+            and "n/a J/tok" in os_line(now, enrep) \
+            and "work 99%" in os_line(now, enrep):
+        en_ok += 1
+    # 4: too few decode samples to have a median, and no rate to divide
+    #    by, both abstain. A power median off two ticks is a number with
+    #    no error bar pretending to have one.
+    if energy_per_token(dict(ensum, dec_n=3), enrep) is None \
+            and energy_per_token(ensum, {"decode_toks": None}) is None \
+            and energy_per_token({"off": "disabled"}, enrep) is None:
+        en_ok += 1
+    # share: the three postable shapes. All of it is reformatting, so
+    # the group is about the reformatting never inventing or losing a
+    # value the block did not already carry.
+    sh_ok, sh_all = 0, 5
+    shb = parse_block(ha)
+    shf = share_facts(shb)
+    # 1: same source, same value. Every field the one line form prints
+    #    is read straight off the block, so each one has to appear in
+    #    it verbatim; a share line that disagreed with its own block
+    #    would be worse than no share line.
+    shline = share_line(shf)
+    if all(str(x) in shline for x in
+           (shb["model"], shb["quant"], shb["engine"], shb["ctx"],
+            shb["settings"], shb["protocol"],
+            "{:.1f}".format(shb["rates"][0]),
+            "{:.1f}".format(shb["rates"][1]))) \
+            and SHARE_URL in shline and shline.count(" | ") == 11:
+        sh_ok += 1
+    # 2: the file side is absent without a model to walk, and absent
+    #    prints as n/a. Dropping those fields would make a shorter line
+    #    that reads as though nobody had asked for them.
+    if share_missing(shf) == ["bpw", "sha256", "kv"] \
+            and "bpw n/a" in shline and "sha256 n/a" in shline \
+            and "KV n/a" in shline:
+        sh_ok += 1
+    # 3: the row is a whole table, not a naked row, so it renders
+    #    wherever it is pasted. Three lines, equal column counts, and a
+    #    separator made only of markdown alignment cells.
+    rows = share_row(shf).splitlines()
+    widths = {len(r.split("|")) for r in rows}
+    if len(rows) == 3 and len(widths) == 1 \
+            and widths.pop() == len(SHARE_COLUMNS) + 2 \
+            and all(set(c.strip()) <= set("-:") and c.strip()
+                    for c in rows[1].split("|")[1:-1]) \
+            and rows[1].count("---:") == 2 and SHARE_URL in rows[0]:
+        sh_ok += 1
+    # 4: the skeleton carries the block through unchanged and leaves
+    #    the opinion to the person who ran it
+    post = share_post(shf, ha)
+    if all(ln in post for ln in ha.rstrip().splitlines()) \
+            and "your take goes here" in post \
+            and "```text" in post and SHARE_URL in post:
+        sh_ok += 1
+    # 5: a walked file supplies exactly the three fields the block
+    #    cannot carry, and the quant it walked wins over the one
+    #    guessed from a filename
+    shimg = synth_id_img([("blk.0.attn_q.weight", (256, 4), 12)], [])
+    shdir = tempfile.mkdtemp(prefix="picchio-share-")
+    shp = os.path.join(shdir, "Some-Model-Q8_0.gguf")
+    with open(shp, "wb") as f:
+        f.write(shimg)
+    shf2 = share_facts(shb, shp)
+    if shf2["quant"] == "Q4_K_M" and shf2["bpw"] == 4.5 \
+            and shf2["sha256"] == hashlib.sha256(shimg).hexdigest() \
+            and "4.50 bpw" in share_line(shf2):
+        sh_ok += 1
+    shutil.rmtree(shdir, ignore_errors=True)
+    # vet: reading someone else's post. Three samples taken from the
+    # thread this came from, at the three specification levels that
+    # thread kept producing.
+    vt_ok, vt_all = 0, 5
+    vague = "Q4 gives me 50 t/s"
+    bench = ("llama-bench -m gpt-oss-20b-mxfp4.gguf -ngl 99 -fa 1 "
+             "-ctk q8_0 -ctv q8_0 -b 2048 -t 8 | gpt-oss 20B MXFP4 MoE "
+             "| pp512 | 823.93 | tg128 | 42.06 | t/s "
+             "| RTX 4060 Laptop GPU - 8GB VRAM")
+    asking = ('Or KV cache quant. "This model sucks past 32k '
+              'context!" What is your kv cache at? "Q4"')
+    # 1: the vague one states a number and nothing that makes it mean
+    #    anything. Q4 is a family, not a file, so it is not a recipe.
+    vs = vet_scan(vague)
+    if vs == {"rate": "50"} and vet_quant_note(vague, vs) == "Q4" \
+            and vet_rate_lane(vague) is None:
+        vt_ok += 1
+    # 2: the specified one states most of it, and the lane labels are
+    #    what make its two figures readable at all
+    vb = vet_scan(bench)
+    if vb["model"] == "gpt-oss-20b" and vb["quant"] == "mxfp4" \
+            and vb["engine"] == "llama-bench" and vb["kv"] == "q8_0" \
+            and vb["placement"] == "99" and vb["machine"] == "RTX 4060" \
+            and vet_rate_lane(bench) == "both prefill and decode" \
+            and "ctx" not in vb:
+        vt_ok += 1
+    # 3: raised but unreadable is its own answer. The bench table names
+    #    a t/s column with the figures three pipes away, and the third
+    #    sample argues about a kv quant without ever stating it.
+    va = vet_scan(asking)
+    if vb["rate"] == "unparsed" and va["kv"] == "unparsed" \
+            and va["ctx"] == "32k" and "engine" not in va:
+        vt_ok += 1
+    # 4: mechanisms are named when the text raises them, not whenever a
+    #    field is missing. The vague sample raises exactly one; the
+    #    third raises the kv and depth pair it is actually about.
+    def fired(t):
+        return {n["key"] for n in VET_NOTES
+                if re.search(n["trigger"], t, re.I)}
+    if fired(vague) == {"quant-spread"} \
+            and fired(asking) == {"kv-dtype", "ctx-depth",
+                                  "quant-spread"} \
+            and "moe-residency" in fired(bench):
+        vt_ok += 1
+    # 5: every mechanism cites a file that is in this tree. A note
+    #    whose evidence moved or was never committed is a tool
+    #    lecturing from memory, which is the thing it is arguing
+    #    against.
+    if all(os.path.exists(os.path.join(here, src))
+           for n in VET_NOTES for src in n["sources"]) \
+            and all(n["sources"] for n in VET_NOTES):
+        vt_ok += 1
+    # cache: a prefill number that is not prefill. Every fixture here is
+    # a real run; the pathological one came off an RTX 5090 box.
+    ch_ok, ch_all = 9, 9
+
+    def _leg(name):
+        out = []
+        for i in (1, 2, 3):
+            base = os.path.join(rawroot, name, "pass{}".format(i))
+            meta = json.load(open(base + ".meta.json"))
+            if os.path.exists(base + ".stderr.txt"):
+                p = parse_stderr(open(base + ".stderr.txt").read(),
+                                 meta["wall_s"])
+            else:
+                p = map_ollama(json.load(open(base + ".response.json")),
+                               meta["wall_s"], meta.get("ps"))
+            # the artifact's own nonce, exactly as the replay loop reads
+            # it: legs recorded before nonces existed carry None and are
+            # judged as the runs that produced them were
+            p["nonce"] = meta.get("prompt_nonce")
+            out.append(p)
+        return out
+    # 1: ollama 0.32.15 served passes 2 and 3 out of its prefix cache,
+    #    reporting all 770 prompt tokens in 36 ms. The lane abstains and
+    #    the reason names the pass that disagrees.
+    doubt = prefill_trust(_leg("linux-5090-ollama"), "ollama")
+    if not (doubt and doubt[0] == "all" and "cold pass" in doubt[1]):
+        ch_ok -= 1
+    # 2: llama.cpp on Vulkan compiles shaders inside the first pass, so
+    #    its cold prefill is 111x off its own warm passes. Same rule,
+    #    same abstention: picchio cannot tell which number to trust.
+    if (prefill_trust(_leg("linux-5090-vulkan")) or ("", ""))[0] != "all":
+        ch_ok -= 1
+    # 3: healthy runs are nowhere near the gate and keep their numbers.
+    #    CUDA spread 1.0016x, Metal 1.005x, ollama on Metal 1.05x.
+    if any(prefill_trust(_leg(n)) for n in
+           ("linux-5090-cuda", "healthy-metal", "ollama-qwen35")):
+        ch_ok -= 1
+    # 8: the gate reads how far out a pass is, not which pass it is. The
+    #    5090 CUDA leg has a cold pass like every other run, and its cold
+    #    prefill lands 0.16% off the warm ones, so nothing abstains. A
+    #    gate that fired on cold as such would eat this one too.
+    cu = [p["prefill_toks"] for p in _leg("linux-5090-cuda")]
+    if not (prefill_trust(_leg("linux-5090-cuda"), "llama.cpp", "CUDA") is None
+            and max(cu) / min(cu) < 1.01):
+        ch_ok -= 1
+    # 9: the same asymmetry on a real nonce run rather than a spliced
+    #    one, end to end: llama.cpp on Vulkan, every pass behind its own
+    #    nonce, cold abstains and is named shader compilation while the
+    #    warm passes stand. The naming needs the backend, and this build
+    #    prints no ggml_vulkan banner at all, so the backend has to come
+    #    off the device llama.cpp says it is using.
+    vkn = _leg("linux-5090-vulkan-nonce")
+    vkr = build_rep(vkn)
+    vt2 = prefill_trust(vkn, "llama.cpp", vkr.get("gpu_kind"))
+    if not (vkr.get("gpu_kind") == "Vulkan"
+            and "5090" in (vkr.get("gpu_device") or "")
+            and vt2 and vt2[0] == "cold"
+            and "shader compilation" in vt2[1]):
+        ch_ok -= 1
+    # 6: the same numbers, this time with the run's own nonce evidence
+    #    on every pass. The cache explanation is ruled out by that
+    #    evidence, so only the cold cell goes and the warm passes,
+    #    which agree with each other to a tenth of a percent, survive.
+    #    Without this asymmetry shader compilation would eat every
+    #    Vulkan warm prefill forever.
+    vk = _leg("linux-5090-vulkan")
+    for i, q in enumerate(vk):
+        q["nonce"] = prompt_nonce("0f3a9c81", i)
+    vt = prefill_trust(vk, "llama.cpp", "Vulkan")
+    if not (vt and vt[0] == "cold" and "shader compilation" in vt[1]):
+        ch_ok -= 1
+    # 7: nonce evidence is per pass and has to be distinct. One shared
+    #    prefix, or one missing, and nothing was ruled out.
+    if nonce_witnessed(vk) is not True \
+            or nonce_witnessed([dict(q, nonce=None) for q in vk]) \
+            or nonce_witnessed([dict(q, nonce="same") for q in vk]):
+        ch_ok -= 1
+    # 4: the nonce differs per pass and keeps one shape, so the passes
+    #    stay comparable while no two of them share a prefix
+    ns = [bench_prompt("0f3a9c81", i) for i in range(3)]
+    if len({n[:22] for n in ns}) != 3 \
+            or len({len(n) for n in ns}) != 1 \
+            or not all(n.endswith(BENCH_PROMPT) for n in ns):
+        ch_ok -= 1
+    # 5: the server lane was already immune and the committed evidence
+    #    says so rather than the code claiming it: picchio sends
+    #    cache_prompt false and every committed pass came back cache_n 0
+    if not all(json.load(open(os.path.join(
+            rawroot, "server-endpoint",
+            "pass{}.response.json".format(i))))["timings"]["cache_n"] == 0
+            for i in (1, 2, 3)):
+        ch_ok -= 1
     # argv split: the `--` passthrough is cut by hand before argparse,
     # so its semantics cannot vary with the interpreter (3.9.6 and
     # 3.12.3 rejected an option followed by `--` as unrecognized
@@ -4687,7 +6289,7 @@ def selftest():
     # onboarding: the zero-argument entry decision is pure given what the
     # scan found, whether a terminal is attached, and what gets typed. The
     # four paths plus the two edges, none of them touching a tty or a gpu
-    gd_ok, gd_all = 0, 8
+    gd_ok, gd_all = 0, 9
     two = [("qwen3.5:9b", "ollama", "qwen3.5:9b", "5.3 GiB"),
            ("llama-3-8b.gguf", "gguf", "/models/llama-3-8b.gguf",
             "4.6 GiB")]
@@ -4750,6 +6352,19 @@ def selftest():
             and "7 models found." in log \
             and any("and 5 more" in x for x in log):
         gd_ok += 1
+    # 9: commands printed by non-interactive discovery name the entry that
+    # actually ran. A downloaded ./picchio must never instruct the reader
+    # to invoke a source file that does not exist beside it.
+    old_argv0 = sys.argv[0]
+    try:
+        sys.argv[0] = "./picchio"
+        zip_call = invocation()
+        sys.argv[0] = "picchio.py"
+        source_call = invocation()
+    finally:
+        sys.argv[0] = old_argv0
+    if zip_call == "./picchio" and source_call == "python3 picchio.py":
+        gd_ok += 1
     vp_ok, vp_all = 0, 3
     if parse_engine_version("version: 9430 (d48a56ef)") == "b9430":
         vp_ok += 1
@@ -4764,14 +6379,20 @@ def selftest():
     print("parser fixtures {}/{}, verdict replay {}/{}, compare {}/{}, "
           "telemetry {}/{}, verify {}/{}, watch {}/{}, monitor {}/{}, "
           "sweep {}/{}, server {}/{}, linux {}/{}, silent-engine {}/{}, "
-          "locale {}/{}, timing-gate {}/{}, amdgpu {}/{}, curves {}/{}, "
-          "plan {}/{}, id {}/{}, argv {}/{}, version {}/{}, "
+          "locale {}/{}, timing-gate {}/{}, amdgpu {}/{}, "
+          "residency {}/{}, curves {}/{}, "
+          "plan {}/{}, id {}/{}, settings {}/{}, energy {}/{}, "
+          "share {}/{}, vet {}/{}, cache {}/{}, argv {}/{}, "
+          "version {}/{}, "
           "onboarding {}/{}, queue/parity {}/{}".format(
               fx_ok, fx_all, rp_ok, rp_all, cp_ok, cp_all, te_ok, te_all,
               ve_ok, ve_all, wa_ok, wa_all, mo_ok, mo_all, sw_ok, sw_all,
               sv_ok, sv_all, lx_ok, lx_all, se_ok, se_all,
-              lc_ok, lc_all, tg_ok, tg_all, am_ok, am_all, rc_ok, rc_all,
-              pl_ok, pl_all, id_ok, id_all, av_ok, av_all, vp_ok, vp_all,
+              lc_ok, lc_all, tg_ok, tg_all, am_ok, am_all,
+              rs_ok, rs_all, rc_ok, rc_all,
+              pl_ok, pl_all, id_ok, id_all, st_ok, st_all, en_ok, en_all,
+              sh_ok, sh_all, vt_ok, vt_all, ch_ok, ch_all,
+              av_ok, av_all, vp_ok, vp_all,
               gd_ok, gd_all, core_ok, core_all))
     if core_failures:
         print("queue/parity failures: " + ", ".join(core_failures))
@@ -4781,8 +6402,11 @@ def selftest():
              and sw_ok == sw_all and sv_ok == sv_all
              and lx_ok == lx_all and se_ok == se_all
              and lc_ok == lc_all and tg_ok == tg_all and am_ok == am_all
-             and rc_ok == rc_all
+             and rs_ok == rs_all and rc_ok == rc_all
              and pl_ok == pl_all and id_ok == id_all and av_ok == av_all
+             and st_ok == st_all and en_ok == en_all
+             and sh_ok == sh_all and vt_ok == vt_all
+             and ch_ok == ch_all
              and vp_ok == vp_all and gd_ok == gd_all
              and core_ok == core_all else 1)
 
@@ -4918,88 +6542,19 @@ def main():
     if sys.argv[1:2] == ["id"]:
         id_cli(sys.argv[2:])
         return
+    if sys.argv[1:2] == ["share"]:
+        share_cli(sys.argv[2:])
+        return
+    if sys.argv[1:2] == ["vet"]:
+        vet_cli(sys.argv[2:], WIDTH)
+        return
+    from picchio_core.cli import command_help_epilog
     ap = argparse.ArgumentParser(
         prog="picchio",
-        description="Knocks on your local LLM setup and listens for hollow "
-                    "spots: are your tok/s numbers what you think they are, "
-                    "and did the GPU actually do the work?",
-        epilog=(
-            "glossary:\n"
-            "  prefill    the model reading your prompt "
-            "(prompt tokens per second)\n"
-            "  decode     the model writing the answer "
-            "(generated tokens per second)\n"
-            "  wallclock  generated tokens over total elapsed time, "
-            "load included\n"
-            "  TTFT       time to first token, roughly load plus prefill "
-            "when cold\n"
-            "  offload    how many model layers sit on the GPU "
-            "(0/33 = CPU run)\n"
-            "\n"
-            "server endpoint:\n"
-            "  picchio.py http://127.0.0.1:8080\n"
-            "  measure a llama-server you already have running, over its\n"
-            "  own http api; no cold pass (the server stays loaded), and\n"
-            "  placement is judged by the os meter and the speed signature\n"
-            "\n"
-            "guard mode:\n"
-            "  picchio.py guard [--keep-logs DIR] -- <command...>\n"
-            "  wrap your own llama.cpp command (llama-server, llama-cli);\n"
-            "  warn the moment placement evidence shows layers off the\n"
-            "  GPU, never kill it, summarize placement when it exits\n"
-            "\n"
-            "compare mode:\n"
-            "  picchio.py compare A.txt B.txt\n"
-            "  diff two pasted verdict blocks variable by variable and\n"
-            "  name the first config difference that explains the gap\n"
-            "\n"
-            "verify mode:\n"
-            "  picchio.py verify [FILE]\n"
-            "  re-derive the physics a pasted verdict block claims and\n"
-            "  flag it when placement, the speed signature, the os meter\n"
-            "  and the headline do not describe the same run\n"
-            "\n"
-            "watch mode:\n"
-            "  picchio.py watch [PID|ollama] [--for SEC] [--json]\n"
-            "  point the os gpu meter at a running process or the whole\n"
-            "  gpu and report whether the gpu is doing the work, without\n"
-            "  parsing engine output. --json is a clean stdout summary;\n"
-            "  --keep-logs DIR saves its raw samples and the same summary\n"
-            "\n"
-            "monitor mode:\n"
-            "  picchio.py monitor TARGET [--every SEC] [--for SEC] [--json]\n"
-            "  probe a running engine on a timer and flag any probe whose\n"
-            "  prefill/decode ratio collapses from that engine's own healthy\n"
-            "  baseline, the intermittent fallback a single snapshot cannot\n"
-            "  catch. TARGET is a llama-server url or an ollama tag; --json\n"
-            "  prints a session summary you can paste into an issue\n"
-            "\n"
-            "run mode:\n"
-            "  picchio.py run MANIFEST [--artifact DIR]\n"
-            "  run or resume a queue/parity manifest, including optional\n"
-            "  multi-round agent traces; progress is stderr, stdout is one\n"
-            "  final JSON, and every raw receipt stays in the artifact\n"
-            "  directory\n"
-            "\n"
-            "ctx sweep:\n"
-            "  picchio.py model.gguf --ctx-sweep [4096,16384,32768]\n"
-            "  re-measure the three lanes at each context depth, each one\n"
-            "  filled for real, and report how far decode decays with depth\n"
-            "\n"
-            "plan mode:\n"
-            "  picchio.py plan [MODEL]\n"
-            "  the capacity account before you download or load: will it\n"
-            "  fit, from the gguf header against this machine's memory\n"
-            "  budget, plus an estimated decode rate once one diagnosis\n"
-            "  has been measured here (estimates are always labeled)\n"
-            "\n"
-            "id mode:\n"
-            "  picchio.py id MODEL\n"
-            "  what the quant label actually holds: the per tensor type\n"
-            "  mix priced into effective bits per weight, the kv cache\n"
-            "  dtype (runtime, cited only from a run measured here), and\n"
-            "  how many experts wake per token on a mixture of experts\n"
-        ),
+        description="A local LLM benchmark that records the file, settings, "
+                    "GPU placement and three performance lanes behind a "
+                    "number.",
+        epilog=command_help_epilog(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("model", nargs="?",
@@ -5020,6 +6575,10 @@ def main():
                          "this machine's measured rates")
     ap.add_argument("--json", action="store_true",
                     help="write only JSON to stdout; human verdict goes to "
+                         "stderr")
+    ap.add_argument("--share", choices=("line", "row", "post"),
+                    help="after measuring, write a postable line, Markdown "
+                         "row or post to stdout; the full receipt stays on "
                          "stderr")
     ap.add_argument("--keep-logs", metavar="DIR",
                     help="save the raw engine output of each pass into DIR "
@@ -5044,6 +6603,11 @@ def main():
     if args.selftest:
         selftest()
         return
+    if args.json and args.share:
+        sys.exit("picchio: --json and --share both own stdout; choose one.")
+    if args.ctx_sweep is not None and args.share:
+        sys.exit("picchio: --share formats an mp1 verdict, while --ctx-sweep "
+                 "prints a multi-context table; choose one.")
 
     if args.model is None and args.explain is not None:
         cached = load_cache()
@@ -5074,7 +6638,7 @@ def main():
             if action == "print":
                 print_discovery(cands, dropped)
             elif not interactive:
-                print(HINT_NO_MODELS)
+                print(hint_no_models())
             sys.exit(0)
     if args.passes < 2:
         sys.exit("picchio: --passes must be at least 2 (one cold, one warm).")
@@ -5110,6 +6674,10 @@ def main():
         sys.exit(0)
 
     passes = []
+    # one id per invocation; with the pass number it rebuilds the exact
+    # prompt every pass sent, which is the whole audit trail the nonce
+    # needs. Not a measurement input, so it never reaches the block.
+    run_id = "{:08x}".format(struct.unpack("<I", os.urandom(4))[0])
     if mode == "ollama" and ollama_ps_entry(args.model):
         sys.stderr.write("picchio: unloading model for a colder pass 1 ...\n")
         ollama_unload(args.model)
@@ -5134,22 +6702,30 @@ def main():
         else:
             note = " (includes any cold load)"
         sys.stderr.write("picchio: pass {}{} ...\n".format(i + 1, note))
+        nonce = prompt_nonce(run_id, i)
+        prompt = bench_prompt(run_id, i)
         if mode == "llama.cpp":
             p = run_llama_pass(binpath, args.model, args.extra,
-                               lp("pass{}.stderr.txt".format(i + 1)))
+                               lp("pass{}.stderr.txt".format(i + 1)),
+                               prompt=prompt)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
-                    "model_name": model_name, "extra_args": args.extra}
+                    "model_name": model_name, "extra_args": args.extra,
+                    "prompt_nonce": nonce}
         elif mode == "server":
             p = run_server_pass(
-                binpath, lp("pass{}.response.json".format(i + 1)))
+                binpath, lp("pass{}.response.json".format(i + 1)),
+                prompt=prompt)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
                     "model_name": model_name, "mode": "server",
-                    "ctx": block_ctx}
+                    "ctx": block_ctx, "prompt_nonce": nonce}
         else:
             p, ps = run_ollama_pass(
-                args.model, lp("pass{}.response.json".format(i + 1)))
+                args.model, lp("pass{}.response.json".format(i + 1)),
+                prompt=prompt)
             meta = {"wall_s": p["wall_s"], "engine": engine_str,
-                    "model_name": model_name, "ps": ps}
+                    "model_name": model_name, "ps": ps,
+                    "prompt_nonce": nonce}
+        p["nonce"] = nonce
         if isinstance(sampler, GpuSampler):
             sampler.mark_pass(p)
         keep_log(lp("pass{}.meta.json".format(i + 1)),
@@ -5185,7 +6761,7 @@ def main():
                            para, mode, explain_part, cold_note, why,
                            block_ctx, args.extra, tele)
     exit_code = EXIT_CODES.get(state, 0)
-    if args.json:
+    if args.json or args.share:
         sys.stderr.write(colorize(block, sys.stderr) + "\n")
     else:
         print(colorize(block))
@@ -5230,6 +6806,10 @@ def main():
                           "exitCode": exit_code,
                           "evidenceDirectory": os.path.abspath(logdir)
                           if logdir else None}, indent=1))
+    elif args.share:
+        facts = share_facts(parse_block(block), args.model, sys.stderr.write)
+        print(render_share(facts, block, args.share))
+        warn_share_missing(facts, args.model)
 
     sys.exit(exit_code)
 

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <g transform="translate(1100 42) scale(6)" shape-rendering="crispEdges">
+    <rect x="9" y="0" width="2" height="1" fill="#e5484d"/>
+    <rect x="13" y="0" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="0" width="1" height="1" fill="#5d3f28"/><rect x="15" y="0" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="8" y="1" width="4" height="1" fill="#e5484d"/>
+    <rect x="13" y="1" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="1" width="1" height="1" fill="#5d3f28"/><rect x="15" y="1" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="8" y="2" width="1" height="1" fill="#2d333b"/><rect x="9" y="2" width="1" height="1" fill="#f0f6fc"/><rect x="10" y="2" width="2" height="1" fill="#2d333b"/>
+    <rect x="13" y="2" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="2" width="1" height="1" fill="#5d3f28"/><rect x="15" y="2" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="8" y="3" width="3" height="1" fill="#2d333b"/><rect x="11" y="3" width="2" height="1" fill="#d4a72c"/>
+    <rect x="13" y="3" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="3" width="1" height="1" fill="#5d3f28"/><rect x="15" y="3" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="7" y="4" width="5" height="1" fill="#2d333b"/>
+    <rect x="13" y="4" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="4" width="1" height="1" fill="#5d3f28"/><rect x="15" y="4" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="6" y="5" width="1" height="1" fill="#2d333b"/><rect x="7" y="5" width="1" height="1" fill="#f0f6fc"/><rect x="8" y="5" width="4" height="1" fill="#2d333b"/>
+    <rect x="13" y="5" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="5" width="1" height="1" fill="#5d3f28"/><rect x="15" y="5" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="6" y="6" width="1" height="1" fill="#2d333b"/><rect x="7" y="6" width="2" height="1" fill="#f0f6fc"/><rect x="9" y="6" width="3" height="1" fill="#2d333b"/>
+    <rect x="13" y="6" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="6" width="1" height="1" fill="#5d3f28"/><rect x="15" y="6" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="5" y="7" width="2" height="1" fill="#2d333b"/><rect x="7" y="7" width="3" height="1" fill="#f0f6fc"/><rect x="10" y="7" width="2" height="1" fill="#2d333b"/>
+    <rect x="13" y="7" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="7" width="1" height="1" fill="#5d3f28"/><rect x="15" y="7" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="5" y="8" width="3" height="1" fill="#2d333b"/><rect x="8" y="8" width="2" height="1" fill="#f0f6fc"/><rect x="10" y="8" width="1" height="1" fill="#2d333b"/>
+    <rect x="13" y="8" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="8" width="1" height="1" fill="#5d3f28"/><rect x="15" y="8" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="6" y="9" width="4" height="1" fill="#2d333b"/>
+    <rect x="13" y="9" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="9" width="1" height="1" fill="#5d3f28"/><rect x="15" y="9" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="7" y="10" width="3" height="1" fill="#2d333b"/><rect x="12" y="10" width="1" height="1" fill="#2d333b"/>
+    <rect x="13" y="10" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="10" width="1" height="1" fill="#5d3f28"/><rect x="15" y="10" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="7" y="11" width="2" height="1" fill="#2d333b"/>
+    <rect x="13" y="11" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="11" width="1" height="1" fill="#5d3f28"/><rect x="15" y="11" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="8" y="12" width="2" height="1" fill="#2d333b"/>
+    <rect x="13" y="12" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="12" width="1" height="1" fill="#5d3f28"/><rect x="15" y="12" width="1" height="1" fill="#6e4a2f"/>
+    <rect x="9" y="13" width="2" height="1" fill="#2d333b"/>
+    <rect x="13" y="13" width="1" height="1" fill="#6e4a2f"/><rect x="14" y="13" width="1" height="1" fill="#5d3f28"/><rect x="15" y="13" width="1" height="1" fill="#6e4a2f"/>
+  </g>
+
+  <text x="70" y="72" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="5">PICCHIO</text>
+  <text x="70" y="164" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="700">CPU fallback: prefill 22× slower, decode only 1.7×</text>
+
+  <line x1="70" y1="205" x2="1210" y2="205" stroke="#30363d" stroke-width="2"/>
+
+  <text x="70" y="270" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2">PLACEMENT</text>
+  <text x="300" y="270" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2">LAYERS</text>
+  <text x="500" y="270" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2">PREFILL</text>
+  <text x="850" y="270" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" letter-spacing="2">DECODE</text>
+
+  <text x="70" y="345" fill="#3fb950" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">GPU</text>
+  <text x="300" y="345" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">33/33</text>
+  <text x="500" y="345" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">588.0 tok/s</text>
+  <text x="850" y="345" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">21.1 tok/s</text>
+
+  <text x="70" y="420" fill="#e5484d" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">CPU</text>
+  <text x="300" y="420" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">0/33</text>
+  <text x="500" y="420" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">26.8 tok/s</text>
+  <text x="850" y="420" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">12.2 tok/s</text>
+
+  <line x1="70" y1="465" x2="1210" y2="465" stroke="#30363d" stroke-width="2"/>
+  <text x="70" y="515" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="22">Qwen3.5-9B · Apple M5 · same file · warm medians</text>
+
+  <text x="70" y="588" fill="#8b949e" font-family="Arial, Helvetica, sans-serif" font-size="21">one executable · Python 3.9+ stdlib · macOS + Linux</text>
+  <text x="1210" y="588" text-anchor="end" fill="#f0f6fc" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700">github.com/logxio/picchio</text>
+</svg>

@@ -2,9 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>picchio</h1>
-
-<p>One executable Python file that measures local LLMs and leaves reproducible evidence.</p>
+<h1>picchio proves what produced the tok/s</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -12,303 +10,236 @@
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#install">Install</a> · <a href="#commands">Commands</a> · <a href="#agent-traces">Agent traces</a> · <a href="#the-quant-label">Quant</a> · <a href="#three-lanes">Lanes</a> · <a href="#measured">Measured</a> · <a href="examples/">Examples</a></p>
+<p><a href="#install">Install</a> · <a href="#commands-four-jobs-one-receipt">Commands</a> · <a href="#evidence-in-every-receipt">Evidence</a> · <a href="https://logxio.github.io/picchio/">Receipt Explorer</a> · <a href="#add-your-machine">Add your machine</a> · <a href="examples/">Examples</a></p>
 
-<img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: python3 picchio.py finds two models, runs three passes, and prints the 15 line verdict block, verdict HEALTHY">
+<img src="assets/picchio-demo.svg" width="600" alt="animated terminal replay: picchio finds two models, runs three passes, and prints a 16-line verdict block">
 
 </div>
 
-Most GPU speed claims are one tok/s number. That number can be
-correct and still tell you the wrong story. Three failure modes,
-each one command:
+Picchio measures local LLMs and writes one reproducible receipt with the
+model, engine settings, GPU placement, prefill, decode, wall-clock
+throughput, memory, power and optional full-file SHA-256.
 
-- Four quantizations of the same Qwen3.5-9B, all labeled Q4_K_M,
-  measure 5.02, 5.02, 5.07 and 5.27 bits per weight
-  ([the quant label](#the-quant-label)).
-- Losing the GPU cost prefill 22x and decode under 2x on the same
-  model and file ([three lanes](#three-lanes)).
-- The 36 tok/s I remembered from bare llama.cpp reproduced in no
-  cell of a 32 cell matrix ([silent CPU fallback](#silent-cpu-fallback)).
+- The same model and file measured **588.0 tok/s prefill and 21.1 tok/s
+  decode on GPU**, but **26.8 and 12.2 on CPU**. Losing the GPU cost
+  prefill 22x while decode fell only 1.7x.
+- Nine files from three model families carrying the `Q4_K_M` label
+  measured **4.82 to 5.55 bits per weight**. Four 9B files alone
+  measured 5.02, 5.02, 5.07 and 5.27 over their shared tensors.
+- A completed run can still be a CPU run. Picchio checks the engine's
+  placement report against the operating system's GPU meter before it
+  calls a result healthy.
 
-picchio splits prefill, decode and wallclock, reads the engine's
-log against the OS's GPU meter, and prints a verdict that says
-whether the GPU did the work, and why.
+[Open the Receipt Explorer](https://logxio.github.io/picchio/). Run Picchio,
+star the repository and [add your receipt](#add-your-machine).
 
 ## Install
 
-```
+```sh
 curl -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio
 chmod +x picchio
 ./picchio
 ```
 
-With no arguments it finds your models (ollama tags, the current
-folder, the HF and LM Studio caches) and runs the one you pick. A
-.gguf path gets the full llama.cpp diagnosis; an ollama tag gets
-measurement mode.
+With no arguments, Picchio finds Ollama tags, local GGUF files and models
+in the Hugging Face and LM Studio caches, then measures the selected model.
+One executable file; Python 3.9+ standard library; llama.cpp or Ollama;
+macOS or Linux.
 
-Needs python3 and either llama.cpp or ollama. Three passes with a
-fixed prompt, the first one cold.
-About a minute here with the GPU engaged, a few minutes on CPU. It
-writes one cache file under `~/.cache/picchio` and nothing else.
+## Commands: four jobs, one receipt
 
-`./picchio --selftest` runs the bundled queue/parity recovery tests. A
-repository checkout also replays the raw engine logs in
-[examples/raw/](examples/raw/) and must reproduce every committed
-verdict block line for line; the badge runs it on every push. The
-downloaded zipapp is one file; its source stays modular under `src/`.
+### 1. Diagnose one run
 
-## Commands
-
-In the table, `picchio` stands for `./picchio`.
-
-| command | what it does | real output |
-|---------|--------------|-------------|
-| `picchio diagnose TARGET --json` | explicit AI entry for one diagnosis; stdout is one JSON object, the human verdict stays on stderr | same evidence as the target rows below |
-| `picchio model.gguf` | full llama.cpp diagnosis: three passes, placement, cold start breakdown, verdict | [example](examples/healthy-metal.txt) |
-| `picchio qwen3.5:9b` | same passes through your local ollama server, placement from the memory split it reports | [example](examples/ollama-qwen35.txt) |
-| `picchio http://127.0.0.1:8080` | measures a llama-server already running, nothing launched, warm rows only | [example](examples/server-endpoint.txt) |
-| `picchio guard -- <command>` | wraps your own command, warns the moment layers land off the GPU, never kills it | [example](examples/guard-ngl0.txt) |
-| `picchio compare A.txt B.txt` | diffs two saved blocks variable by variable, the first config difference takes the blame | [example](examples/compare.txt) |
-| `picchio verify FILE` | flags a pasted block whose own numbers contradict each other | [block](examples/forged-block.txt) · [output](examples/verify-forged.txt) |
-| `picchio watch [PID\|ollama] --for 8 --json` | watches whole-GPU activity beside a process or loaded Ollama model without parsing or signaling it; stable JSON and raw JSONL are optional (macOS) | [example](examples/watch-ollama.txt) |
-| `picchio monitor TARGET` | probes a running llama-server url or ollama tag on a timer, flags any probe whose prefill/decode ratio collapses from that engine's own healthy baseline; `--json` for a pasteable session | [server](examples/monitor.txt) · [ollama+json](examples/monitor-ollama.txt) |
-| `picchio run SUITE.json` | runs or resumes a long queue, generic multi-round agent trace, or bare/product parity job; one final JSON plus a complete artifact directory | [trace](examples/agent-trace.md) · [manifest contract](docs/run-manifests.md) |
-| `picchio capabilities --json` | prints the stable command, schema and exit-code contract for Codex or Claude Code | machine JSON |
-| `picchio plan [MODEL]` | will it fit, priced from the gguf header; a decode estimate appears once one run is measured | [example](examples/plan-35b.txt) |
-| `picchio id MODEL` | splits the quant label: per tensor type mix, effective bits per weight, KV dtype, experts | [example](examples/id-35b.txt) |
-| `picchio --explain 36` | classifies a number you saw against the lanes measured here (cached rates, no rerun) | [example](examples/explain-36.txt) |
-| `picchio model.gguf --ctx-sweep` | re-measures the lanes at several context depths and reports the decay slope (9 full runs by default: 3 tiers x 3 passes, several minutes, not the ~1 min single run) | [example](examples/ctx-sweep.txt) |
-
-`watch` runs next to real work, launching, unloading and signaling
-nothing; `--for` is the sampling window in seconds, and positional
-`ollama` names the loaded model being judged (`--engine ollama` remains
-an alias). With no `--for`, a bare `watch` samples 6 s, but `watch PID`
-runs until that process exits (capped at an hour), so pass `--for` for
-a daemon you do not want to wait on:
-
-```
-./picchio watch ollama --for 8 --json --keep-logs evidence/
+```sh
+./picchio model.gguf
+./picchio qwen3.5:9b
+./picchio http://127.0.0.1:8080
+./picchio diagnose model.gguf --json
+./picchio model.gguf --share row
 ```
 
-With `--json`, the human conclusion stays on stderr and stdout is one
-`picchio.watch.v1` object, ready for `json.loads`. `--keep-logs` writes
-`watch.samples.jsonl` and `watch.summary.json`; every sample carries a
-monotonic timestamp, GPU utilization, power and memory, with unavailable
-fields recorded as `null` and explained in `warnings`. These are whole-GPU
-measurements, never per-PID attribution.
+A GGUF path runs llama.cpp. An Ollama tag measures local Ollama. A URL
+measures a running llama-server. `diagnose --json` writes machine output
+to stdout and the verdict to stderr. `--share line|row|post` writes a
+ready-to-paste artifact and adds SHA-256 plus effective bits per weight
+for a local file.
 
-```
---passes N       measurement passes, first one cold (default 3, min 2)
---keep-logs DIR  save each pass's raw engine output into DIR, plus
-                 the sampled GPU curve (telemetry.json) on macOS
-                 and on NVIDIA Linux
---no-telemetry   skip the OS-side GPU sampling; the os line then
-                 says the verdict rests on engine+timing only
---json           JSON only on stdout; human verdict stays on stderr
---bin PATH       llama.cpp binary to use; prefer llama-completion, the
-                 one-shot binary, not the interactive llama-cli
---selftest       verify bundled logic/recovery; a clone also replays raw logs
---version        print version and measurement protocol
+Real receipts: [llama.cpp on Metal](examples/healthy-metal.txt) ·
+[Ollama](examples/ollama-qwen35.txt) ·
+[running server](examples/server-endpoint.txt) ·
+[CPU fallback](examples/cpu-fallback.txt)
+
+### 2. Inspect the exact file
+
+```sh
+./picchio id model.gguf
+./picchio plan model.gguf
 ```
 
-Anything after a bare `--` goes straight to the llama.cpp binary.
-Color only on a terminal (`NO_COLOR` respected); piped output is
-plain ASCII.
+`id` hashes every byte and reports the GGUF tensor mix, effective bits per
+weight and stored origin claims. `plan` reports fit before a run and adds
+a decode estimate after a measurement exists.
 
-Exit codes, for scripting: 0 healthy or no evidence, 2 could not
-run, 3 partial offload, 4 silent CPU fallback, 5 conflicting
-evidence. guard passes the wrapped command's own exit code through
-(128 plus the signal number if it died by one); compare exits 0
-once both blocks parse; verify exits 0 when a block is
-self-consistent, 5 when its sources fight; watch exits 0 when the
-GPU is working, 4 when it sits idle; monitor exits 0 when every
-probe held the GPU, 4 when any probe caught a fallback.
+Real cards: [MoE identity](examples/id-35b.txt) ·
+[four Q4_K_M files](examples/quantizers/) ·
+[35B fit plan](examples/plan-35b.txt)
 
-`run` uses the same numeric channel with job-specific meanings: 0 completed,
-2 could not run or incomplete, 3 runtime failure, 4 quality failure, 5 causal
-evidence conflict, 6 safety stop, 130 interrupted. Runtime success never
-upgrades quality success.
+### 3. Watch a real setup
 
-## Long runs
-
-```
-./picchio run suite.json
+```sh
+./picchio guard -- llama-completion -m model.gguf -ngl 99 -p "hello"
+./picchio watch ollama --for 8 --json
+./picchio monitor qwen3.5:9b
 ```
 
-That command creates `suite.picchio-run/` before work starts. It appends raw
-evidence, atomically commits each result, and updates a checkpoint. Run the
-same command after interruption: completed cases are skipped and unfinished
-cases get a new attempt without overwriting the old one.
+`guard` warns when layers land off the GPU. `watch` samples whole-GPU
+activity beside a process or loaded Ollama model. `monitor` repeats probes
+against Ollama or llama-server and flags a collapsed performance lane.
 
-Queue artifacts separate runtime and quality, keep per-request input/output,
-server log references, memory/swap snapshots, whole-GPU JSONL and hourly
-throughput/thermal rollups. Parity runs the same fixtures through bare and
-product adapters. It emits a causal verdict only when model hash, runtime build,
-context, KV, sampling, task bytes, actual engine wire bytes, cache state and
-received process evidence all match. Parity is interleaved by default; failed
-causal evidence says `DIRECTIONAL` and exits 5.
+Real sessions: [guard](examples/guard-ngl0.txt) ·
+[watch](examples/watch-ollama.txt) ·
+[monitor](examples/monitor-ollama.txt)
 
-## Agent traces
+### 4. Share or check the evidence
 
-A command adapter can return a generic `picchio.agent-trace.v1`. Picchio keeps
-every round's real engine body, separates the last request's current context
-from cumulative prompt work, and writes both JSON and a neutral Markdown table.
-Component names are fixed (`system instructions`, `document context`, `tool
-schemas`, and the rest), never copied from an application's branding. If an app
-reports that it compacted below the threshold, the result says `FALSE POSITIVE`
-instead of leaving a cumulative token number open to interpretation. See the
-[rendered trace](examples/agent-trace.md) and complete [adapter
-contract](docs/run-manifests.md). Exact wire bodies stay in the local artifact
-directory and may contain private prompt or document content; redact them before
-sharing. The Markdown table contains counts and neutral categories only.
+```sh
+./picchio share verdict.txt --line
+./picchio share verdict.txt --row
+./picchio share verdict.txt --post
+./picchio verify verdict.txt
+./picchio compare before.txt after.txt
+```
 
-## The quant label
+`share` emits a comment line, Markdown row or post skeleton. `--model`
+adds SHA-256 and bits per weight. `verify` checks contradictions.
+`compare` reports the first configuration difference before the rates.
 
-`picchio id MODEL` walks the gguf tensor table and prices every
-tensor by its ggml type. Our own Q4_K_M measures 5.07 bits per
-weight, 27% over the 4 in the name: a mix of five tensor types
-from 4.50 to 32.00 bits, and the header's own byte offsets have to
-audit to the same total before the card prints. The same Qwen3.5-9B
-under the same Q4_K_M label measures 5.02, 5.02, 5.07 and 5.27 bits
-per weight across four quantizers, on the 427 tensors all four
-files share ([examples/quantizers/](examples/quantizers/)). The
-label does not even promise the same tensor set: one quantizer
-ships a 243M-parameter MTP head inside the main file at q8_0,
-another ships the same head as a separate repo. The KV cache dtype is
-not in the file; the card cites only a concrete marker from the last
-measured run for that model and engine (llama.cpp stderr or a readable
-local Ollama runner log), and says not recorded when neither exposes
-one. On a mixture of experts it reports how many experts wake per token
-([examples/id-35b.txt](examples/id-35b.txt) reads 8 of 256, about
-3.5B of 34.7B weights per token). Works on a .gguf path or
-an ollama tag, read only, exit 0.
+Real outputs: [three share formats](examples/share-modes.txt) ·
+[forged block check](examples/verify-forged.txt) ·
+[comparison](examples/compare.txt)
 
-## Three lanes
+Context sweeps, cached-rate classification, post audits, resumable suites
+and agent traces remain available through `./picchio --help`. The long-run
+manifest and artifact contract lives in [docs/run-manifests.md](docs/run-manifests.md).
 
-Prefill (elsewhere called prompt processing or pp) is
-how fast the model reads your prompt; decode (tg or eval) is how
-fast it writes the answer; wallclock is generated tokens divided by
-everything, load and warmup included.
+## Evidence in every receipt
+
+### File identity
+
+`./picchio id` reports full SHA-256, exact byte count, every tensor's ggml
+type and effective bits per weight.
+
+Across the four Qwen3.5-9B files in this repository, one file also bundles
+a 243M-parameter MTP head at q8_0 while another publishes that head
+separately. The underlying tensor accounts and byte checks are in
+[examples/quantizers/](examples/quantizers/).
+
+### Three performance lanes
+
+Picchio reports prompt prefill, token decode and end-to-end wall-clock
+throughput as separate lanes.
 
 <p align="center">
-<img src="assets/prefill-decode-asymmetry.svg" width="600" alt="prefill collapses 22x from GPU to CPU while decode only drops 1.7x on the same model and file">
+<img src="assets/prefill-decode-asymmetry.svg" width="600" alt="prefill falls 22x from GPU to CPU while decode falls 1.7x on the same model and file">
 </p>
 
-The lanes fail separately; the chart is two real runs from
-[examples/](examples/), 4 of 10 cpu threads on the CPU side.
-Prefill sets the time to first token on a long prompt. A Mac
-screenshot showing 500 tok/s is almost always prefill.
+The chart uses the committed GPU and CPU receipts. Every bar is a warm
+median, scaled within its own lane.
 
-## Silent CPU fallback
+### Placement, settings and cost
 
-Same machine, same model, same file, forced to CPU
-([examples/cpu-fallback.txt](examples/cpu-fallback.txt)):
+Picchio reads placement from the engine and checks it against the OS GPU
+meter. On macOS it uses `ioreg` and Apple energy counters without sudo.
+On NVIDIA Linux it reads NVML. On AMD Linux it reads the amdgpu sysfs
+counters without requiring ROCm.
+
+The same block records engine sampling settings, GPU memory change, power,
+decode energy per generated token and the source of every field.
 
 <p align="center">
-<img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block in a terminal: NOT ENGAGED 0/33 layers, OS meter flat, verdict SILENT CPU FALLBACK, WHY line naming the forcing flags">
+<img src="assets/cpu-fallback-verdict.svg" width="600" alt="picchio verdict block: zero of 33 layers on GPU, the OS meter is flat, and the verdict is CPU fallback">
 </p>
 
-The WHY line names the first cause the run's own evidence can
-prove, or says unknown.
-
-While measuring local models for an app I am building, weeks of
-it, bare llama.cpp gave me 36 tok/s and the same model through the
-app gave 11.5: that gap is why this repo exists. A 32 cell matrix
-across CPU and GPU, cold and warm, reproduced the 36 in no cell, a
-rate from a different lane remembered as generation speed. What
-the matrix did surface was this silent fallback.
-
-## The os line
-
-While the passes run, a background thread reads the OS's own GPU
-meter: on macOS, `ioreg` at 4 Hz plus the `powermetrics` energy
-counters, minus the sudo; on NVIDIA Linux, the driver's NVML; on AMD
-Linux, the amdgpu driver's own sysfs counters, no ROCm install
-needed. That is the `os` line. A full offload claim over a GPU the
-OS saw stay flat is CONFLICTING EVIDENCE (exit 5). A build that
-prints no gpu evidence while the meter watches the gpu stay idle is
-SILENT CPU FALLBACK (exit 4), measured on a real mis-built binary.
-A run that measured nothing at all is NO TIMING EVIDENCE (exit 7):
-the lanes say `n/a` because nothing was read, not because the answer
-was zero, and no verdict is offered over them. A missing source
-abstains; the line says which evidence is left.
-
-## llama-bench
-
-llama-bench answers a different question. Steady state pp and tg
-for this machine and model, measured here, same model, same day:
-
-| tool, config              | prompt side   | generation side | notes                     |
-|---------------------------|---------------|-----------------|---------------------------|
-| llama-bench, default      | pp256: 597.06 | tg64: 20.21     | backend column: BLAS,MTL  |
-| llama-bench, -ngl 0 (CPU) | pp256: 27.82  | tg64: 11.90     | backend column: BLAS,MTL  |
-
-The rented 4090 does the same. Its CUDA build keeps `CUDA` in that
-column at `-ngl 0`. The 21x prompt side collapse is the CPU run's
-only visible trace; there is no load time, no cold/warm split, no
-verdict.
+The `WHY` line reports the first proven cause. Conflicting engine and OS
+evidence prints `CONFLICTING EVIDENCE`. `--keep-logs DIR` keeps the raw
+engine output and sampled GPU curve.
 
 ## Measured
 
-Apple M5, 32 GB, macOS 26.5.1, llama.cpp build 9430 and ollama
-0.31.1, roughly 730 prompt tokens and 128 generated tokens per pass,
-three passes, the first one cold. That protocol is named in every
-block footer (mp1); if it ever changes the tag changes. The lane
-columns hold warm medians; the raw engine output behind the first
-three rows and the 4090 row is in [examples/raw/](examples/raw/),
-written by `--keep-logs`.
+Every row below uses protocol `mp1`: roughly 770 prompt tokens, 128
+generated tokens, three passes, first pass cold, and a unique nonce for
+every pass. Warm columns are medians. Linked receipts and raw engine logs
+live in [examples/](examples/) and [examples/raw/](examples/raw/).
 
-| machine         | model, engine                      | protocol | prefill | decode | wallclock | verdict             |
-|-----------------|------------------------------------|----------|--------:|-------:|----------:|---------------------|
-| Apple M5, 32 GB | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      |   588.0 |   21.1 |      15.5 | HEALTHY             |
-| Apple M5, 32 GB | same, forced CPU (0/33 layers)     | mp1      |    26.8 |   12.2 |       3.0 | SILENT CPU FALLBACK |
-| Apple M5, 32 GB | qwen3.5:9b, ollama 0.31.1          | mp1      |   833.8 |   21.3 |      18.1 | HEALTHY             |
-| Apple M5, 32 GB | Qwen3.6-35B-A3B UD-Q4, llama.cpp   | mp1      |   787.3 |   34.4 |      19.1 | HEALTHY             |
-| Apple M5, 32 GB | qwen3.6:35b-a3b, ollama 0.31.1     | mp1      |  1191.8 |   33.4 |      27.6 | HEALTHY             |
-| RTX 4090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp b9430 | mp1      |  6763.3 |  138.0 |      25.2 | HEALTHY             |
-| your machine    |                                    |          |         |        |           |                     |
+| machine         | model, engine                       | protocol | prefill | decode | wallclock | verdict             |
+|-----------------|-------------------------------------|----------|--------:|-------:|----------:|---------------------|
+| Apple M5, 32 GB | Qwen3.5-9B Q4_K_M, llama.cpp b9430  | mp1      |   588.0 |   21.1 |      15.5 | HEALTHY             |
+| Apple M5, 32 GB | same, forced CPU (0/33 layers)      | mp1      |    26.8 |   12.2 |       3.0 | SILENT CPU FALLBACK |
+| Apple M5, 32 GB | qwen3.5:9b, Ollama 0.31.1           | mp1      |   490.4 |   17.9 |      14.4 | HEALTHY             |
+| Apple M5, 32 GB | Qwen3.6-35B-A3B UD-Q4, llama.cpp    | mp1      |   787.3 |   34.4 |      19.1 | HEALTHY             |
+| Apple M5, 32 GB | qwen3.6:35b-a3b, Ollama 0.31.1      | mp1      |   728.7 |   31.2 |      23.4 | HEALTHY             |
+| RTX 4090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp b9430  | mp1      |  6763.3 |  138.0 |      25.2 | HEALTHY             |
+| RTX 5090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp b0.2.0 | mp1      |  9135.9 |  226.4 |      57.3 | HEALTHY             |
+| RTX 5090, Linux | Qwen3.5-9B Q4_K_M, llama.cpp Vulkan | mp1      |  6206.3 |  198.4 |      51.0 | HEALTHY             |
+| RTX 5090, Linux | qwen3.5:9b, Ollama 0.32.15          | mp1      |  8614.7 |  193.5 |     153.9 | HEALTHY             |
+| RTX 5090, Linux | Qwen3.8-27B UD-Q4, llama.cpp b0.2.0 | mp1      |  3364.4 |   81.5 |      25.3 | HEALTHY             |
+| your machine    |                                     |          |         |        |           |                     |
 
-Run picchio once and paste the verdict block into an issue; a
-boring HEALTHY on hardware I do not have is still a data point. A
-wrong verdict is the issue I want most.
-[Misdiagnosis reports](.github/ISSUE_TEMPLATE/misdiagnosis-report.md)
-go to the top of the pile.
+The RTX 5090 ran the same 9B through
+[CUDA](examples/linux-5090-cuda.txt),
+[Vulkan](examples/linux-5090-vulkan-nonce.txt) and
+[Ollama](examples/linux-5090-ollama-nonce.txt). The 27B run filled the
+card at 15.8 GiB resident and 343 W
+([receipt](examples/linux-5090-27b.txt)). The 35B Apple run shows the
+other shape: a 3B-active mixture-of-experts model whose first pass is
+mostly the cost of reading 20.6 GiB of weights
+([llama.cpp](examples/id-35b.txt) · [Ollama](examples/ollama-35b.txt)).
 
-The 35B result is mostly a load-time problem. 13 of the first
-pass's 19 seconds went to reading 20.6 GiB of weights. The
-3B-active MoE still decodes 1.6x faster than the dense 9B.
+## Add your machine
 
-## Limits
+```sh
+./picchio MODEL --share row > verdict-row.md 2> verdict.txt
+```
 
-- Tested: one Apple Silicon machine (llama.cpp and ollama) plus
-  one rented Linux RTX 4090 (CUDA). ollama on Linux, Vulkan parsing
-  and the AMD meter have not touched real hardware; if you run
-  those, I want the verdict block either way.
-- The AMD meter reads the amdgpu counters directly, but its judging
-  thresholds are the ones calibrated on NVML and ioreg. Nothing has
-  checked them against a real Radeon yet, so a surprising AMD
-  verdict is worth reporting rather than believing.
-- The full verdict block is llama.cpp and ollama only. MLX, LM
-  Studio and other engines get placement truth through `watch`,
-  not the lane table.
-- Ollama does not expose per layer placement, device init logs, or
-  thread configuration. Placement comes from the memory split it
-  reports, unknown when there is none.
-- Server mode forces a full prompt read on every pass; on a remote
-  url, wallclock includes the network round trip.
-- Warm numbers drift between sessions: the 9B medians in this repo
-  moved 5 to 8% between two recording rounds on an idle machine.
-  `--passes 5` tightens a single reading.
-- The os meter counts whole GPUs, not this process's share, so it
-  only judges runs that started from an idle GPU. On a multi card
-  box the cards collapse to one reading per tick: utilization takes
-  the highest card, memory and power the sum.
-- The engine's numbers are read back out of its log, so picchio runs
-  it with `LC_NUMERIC=C`. Without that pin a comma decimal locale
-  makes llama.cpp print `28,53 GiB` and every lane comes back empty.
-  Logs captured elsewhere are read either way.
+- [Submit a verdict](https://github.com/logxio/picchio/issues/new?template=verdict-report.md)
+- [Report a wrong verdict](https://github.com/logxio/picchio/issues/new?template=misdiagnosis-report.md)
+
+Paste the complete 16-line receipt. Attach `--keep-logs` output for an
+unexpected result.
+
+## Evidence coverage
+
+- llama.cpp and Ollama get the full verdict block on macOS and Linux.
+  `watch` adds OS-side placement evidence for MLX, LM Studio and other
+  running processes.
+- The repository carries real Apple Silicon, NVIDIA CUDA and NVIDIA
+  Vulkan receipts. AMD Linux uses the amdgpu sysfs meter; community
+  Radeon receipts extend that calibration set.
+- llama.cpp contributes per-layer placement and applied sampler settings.
+  Ollama contributes its CPU/GPU weight-memory split. Every receipt names
+  the source beside the field.
+- A judged run begins from an idle GPU. The receipt prints the pre-run
+  utilization and power reading that admitted or disqualified the sample.
+- A remote llama-server keeps engine-reported prefill and decode counters
+  while wall-clock throughput includes the network path.
+
+## Reproducibility and scripting
+
+```sh
+./picchio --selftest
+./picchio --version
+./picchio --help
+```
+
+The repository self-test replays the raw logs behind committed receipts
+and must reproduce their verdict blocks line for line. `--json` emits
+stable machine output where supported. Exit codes distinguish healthy,
+could not run, partial offload, CPU fallback and conflicting evidence;
+`./picchio --help` is the current command and exit-code contract.
+
+Picchio writes one cache file under `~/.cache/picchio`. Measurement logs
+are written only when you request `--keep-logs DIR`.
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)

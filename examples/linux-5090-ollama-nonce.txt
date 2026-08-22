@@ -1,0 +1,16 @@
+model    qwen3.5:9b, 9.7 B, Q4_K_M, 5.11 GiB, ollama 0.32.15
+gpu      ENGAGED: 100% of weights in GPU memory (ollama ps)
+os       gpu idle 0%, work 0%, mem +6.7 GiB, 65.5 W, 0.86 J/tok
+settings not recorded: the ollama api returns no sampling settings
+ctx 4096         prefill         decode      wallclock
+  cold           abstain     82.0 tok/s      2.8 tok/s
+  warm mid  8614.7 tok/s    193.5 tok/s    153.9 tok/s
+  warm span    8613~8616    192.6~194.5    153.3~154.5
+where the cold pass went (45.8 s)
+  load weights   25.7 s  ################............   56%
+  prefill        18.5 s  ###########.................   40%
+  decode          1.6 s  #...........................    3%
+  engine misc     0.0 s  ............................    0%
+VERDICT: HEALTHY. Cold prefill abstains: runner start-up put it
+  203x off the warm passes, 42 against 8615 tok/s.
+-- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

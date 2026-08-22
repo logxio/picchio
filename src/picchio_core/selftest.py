@@ -12,11 +12,14 @@ import sys
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ElementTree
 import zipfile
 
 from . import PARITY_SCHEMA, QUEUE_SCHEMA
 from .artifacts import (ArtifactError, atomic_write_bytes, atomic_write_json,
                         load_json)
+from .cli import (COMMAND_CAPABILITIES, capabilities_value,
+                  command_help_epilog)
 from .host import process_identity, stable_process_identity
 from .parity import run_parity
 from .runner import run_queue
@@ -216,6 +219,28 @@ def run_selftests(entry_argv):
         checks.append(name)
         if not condition:
             failures.append(name)
+
+    catalog = capabilities_value("selftest", "selftest")
+    mapped_commands = {
+        command
+        for job in catalog["jobs"].values()
+        for command in job["commands"]
+    }
+    check("capabilities_complete",
+          mapped_commands == set(COMMAND_CAPABILITIES) - {"capabilities"} and
+          set(catalog["commands"]) == set(COMMAND_CAPABILITIES))
+    check("capabilities_exit_meanings",
+          catalog["exitCodesByCommand"]["diagnose"]["3"] ==
+          "partial offload" and
+          catalog["exitCodesByCommand"]["run"]["3"] ==
+          "runtime failure" and
+          "command-specific" in catalog["exitCodes"]["0"])
+    rendered_help = command_help_epilog()
+    check("help_from_capability_catalog",
+          all(spec["usage"] in rendered_help
+              for name, spec in COMMAND_CAPABILITIES.items()
+              if name != "capabilities") and
+          COMMAND_CAPABILITIES["capabilities"]["usage"] in rendered_help)
 
     with tempfile.TemporaryDirectory(prefix="picchio-selftest-") as root:
         adapter_path = os.path.join(root, "fake_adapter.py")
@@ -535,6 +560,35 @@ def run_selftests(entry_argv):
 
         source_root = os.path.join(checkout_root, "src", "picchio_core")
         if os.path.isdir(source_root):
+            def svg_receipt(name, first_y, last_y):
+                path = os.path.join(checkout_root, "assets", name)
+                try:
+                    root = ElementTree.parse(path).getroot()
+                except (OSError, ElementTree.ParseError):
+                    return []
+                namespace = "{http://www.w3.org/2000/svg}"
+                return [
+                    "".join(node.itertext())
+                    for node in root.findall(namespace + "text")
+                    if first_y <= int(node.attrib.get("y", "0")) <= last_y
+                ]
+
+            def example_lines(name):
+                path = os.path.join(checkout_root, "examples", name)
+                try:
+                    with open(path, encoding="utf-8") as handle:
+                        return handle.read().splitlines()
+                except OSError:
+                    return []
+
+            check("visual_receipts_fresh",
+                  svg_receipt("picchio-demo.svg", 289, 589) ==
+                  example_lines("ollama-qwen35.txt") and
+                  svg_receipt("healthy-verdict.svg", 69, 369) ==
+                  example_lines("healthy-metal.txt") and
+                  svg_receipt("cpu-fallback-verdict.svg", 69, 369) ==
+                  example_lines("cpu-fallback.txt"))
+
             archive_path = os.path.join(checkout_root, "public",
                                         "picchio.pyz")
             archive_ok = os.path.isfile(archive_path)

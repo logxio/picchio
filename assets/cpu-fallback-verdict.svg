@@ -1,22 +1,23 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="558" height="372" viewBox="0 0 558 372" font-family="SF Mono, Menlo, Consolas, monospace" font-size="13">
-<rect width="558" height="372" rx="10" fill="#0d1117" stroke="#30363d"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="558" height="392" viewBox="0 0 558 392" font-family="SF Mono, Menlo, Consolas, monospace" font-size="13">
+<rect width="558" height="392" rx="10" fill="#0d1117" stroke="#30363d"/>
 <circle cx="22" cy="17" r="6" fill="#ff5f57"/>
 <circle cx="42" cy="17" r="6" fill="#febc2e"/>
 <circle cx="62" cy="17" r="6" fill="#28c840"/>
-<text x="279" y="21" text-anchor="middle" fill="#8b949e" font-size="12">python3 picchio.py model.gguf -- --device none -ngl 0</text>
+<text x="279" y="21" text-anchor="middle" fill="#8b949e" font-size="12">./picchio model.gguf -- --device none -ngl 0</text>
 <text x="22" y="69" xml:space="preserve"><tspan fill="#e6edf3">model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430</tspan></text>
 <text x="22" y="89" xml:space="preserve"><tspan fill="#e6edf3">gpu      </tspan><tspan fill="#f85149" font-weight="bold">NOT ENGAGED</tspan><tspan fill="#e6edf3">: 0/33 layers on GPU [--device none -ngl 0]</tspan></text>
-<text x="22" y="109" xml:space="preserve"><tspan fill="#e6edf3">os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W</tspan></text>
-<text x="22" y="129" xml:space="preserve"><tspan fill="#8b949e">ctx 4096         prefill         decode      wallclock</tspan></text>
-<text x="22" y="149" xml:space="preserve"><tspan fill="#e6edf3">  cold        22.8 tok/s      9.3 tok/s      2.5 tok/s</tspan></text>
-<text x="22" y="169" xml:space="preserve"><tspan fill="#e6edf3">  warm mid    26.8 tok/s     12.2 tok/s      3.0 tok/s</tspan></text>
-<text x="22" y="189" xml:space="preserve"><tspan fill="#e6edf3">  warm span        27~27      12.0~12.4        3.0~3.0</tspan></text>
-<text x="22" y="209" xml:space="preserve"><tspan fill="#e6edf3">where the cold pass went (49.9 s, 4/10 threads, weights cached)</tspan></text>
-<text x="22" y="229" xml:space="preserve"><tspan fill="#e6edf3">  load weights    2.1 s  #...........................    4%</tspan></text>
-<text x="22" y="249" xml:space="preserve"><tspan fill="#e6edf3">  prefill        33.4 s  ###################.........   67%</tspan></text>
-<text x="22" y="269" xml:space="preserve"><tspan fill="#e6edf3">  decode         13.7 s  ########....................   27%</tspan></text>
-<text x="22" y="289" xml:space="preserve"><tspan fill="#e6edf3">  engine misc     0.8 s  ............................    2%</tspan></text>
-<text x="22" y="309" xml:space="preserve"><tspan fill="#e6edf3">VERDICT: </tspan><tspan fill="#f85149" font-weight="bold">SILENT CPU FALLBACK</tspan><tspan fill="#e6edf3">. Prefill: 93 s per 2500 tokens.</tspan></text>
-<text x="22" y="329" xml:space="preserve"><tspan fill="#8b949e">WHY: forced by flag: --device none -ngl 0</tspan></text>
-<text x="22" y="349" xml:space="preserve"><tspan fill="#8b949e">-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1</tspan></text>
+<text x="22" y="109" xml:space="preserve"><tspan fill="#e6edf3">os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W, 0.01 J/tok</tspan></text>
+<text x="22" y="129" xml:space="preserve"><tspan fill="#e6edf3">settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7</tspan></text>
+<text x="22" y="149" xml:space="preserve"><tspan fill="#8b949e">ctx 4096         prefill         decode      wallclock</tspan></text>
+<text x="22" y="169" xml:space="preserve"><tspan fill="#e6edf3">  cold        22.8 tok/s      9.3 tok/s      2.5 tok/s</tspan></text>
+<text x="22" y="189" xml:space="preserve"><tspan fill="#e6edf3">  warm mid    26.8 tok/s     12.2 tok/s      3.0 tok/s</tspan></text>
+<text x="22" y="209" xml:space="preserve"><tspan fill="#e6edf3">  warm span        27~27      12.0~12.4        3.0~3.0</tspan></text>
+<text x="22" y="229" xml:space="preserve"><tspan fill="#e6edf3">where the cold pass went (49.9 s, 4/10 threads, weights cached)</tspan></text>
+<text x="22" y="249" xml:space="preserve"><tspan fill="#e6edf3">  load weights    2.1 s  #...........................    4%</tspan></text>
+<text x="22" y="269" xml:space="preserve"><tspan fill="#e6edf3">  prefill        33.4 s  ###################.........   67%</tspan></text>
+<text x="22" y="289" xml:space="preserve"><tspan fill="#e6edf3">  decode         13.7 s  ########....................   27%</tspan></text>
+<text x="22" y="309" xml:space="preserve"><tspan fill="#e6edf3">  engine misc     0.8 s  ............................    2%</tspan></text>
+<text x="22" y="329" xml:space="preserve"><tspan fill="#e6edf3">VERDICT: </tspan><tspan fill="#f85149" font-weight="bold">SILENT CPU FALLBACK</tspan><tspan fill="#e6edf3">. Prefill: 93 s per 2500 tokens.</tspan></text>
+<text x="22" y="349" xml:space="preserve"><tspan fill="#8b949e">WHY: forced by flag: --device none -ngl 0</tspan></text>
+<text x="22" y="369" xml:space="preserve"><tspan fill="#8b949e">-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1</tspan></text>
 </svg>

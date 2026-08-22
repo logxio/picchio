@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Picchio Receipt Explorer</title>
+  <meta name="description" content="Compare local LLM speed with the GPU placement, settings, memory and power that produced it.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://logxio.github.io/picchio/">
+  <meta property="og:title" content="CPU fallback: prefill 22× slower, decode only 1.7×">
+  <meta property="og:description" content="Every number links to the committed Picchio receipt and raw evidence behind it.">
+  <meta property="og:image" content="https://logxio.github.io/picchio/social-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="CPU fallback: prefill 22× slower, decode only 1.7×">
+  <meta name="twitter:description" content="Every number links to the committed Picchio receipt and raw evidence behind it.">
+  <meta name="twitter:image" content="https://logxio.github.io/picchio/social-preview.png">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: #11161d;
+      --line: #30363d;
+      --text: #f0f6fc;
+      --muted: #8b949e;
+      --green: #3fb950;
+      --red: #f85149;
+      --gold: #d4a72c;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+    a { color: inherit; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 28px 0; }
+    .brand { font-family: var(--mono); font-weight: 800; letter-spacing: .22em; text-decoration: none; }
+    .star { border: 1px solid var(--line); padding: 10px 14px; text-decoration: none; font-weight: 700; }
+    .star:hover, .star:focus-visible { border-color: var(--text); }
+    main { padding: 46px 0 80px; }
+    h1 { max-width: 980px; margin: 0; font-size: clamp(42px, 7vw, 78px); line-height: .98; letter-spacing: -.045em; }
+    .proof { display: grid; grid-template-columns: 1.2fr repeat(3, 1fr); margin-top: 42px; border: 1px solid var(--line); }
+    .proof > div { min-width: 0; padding: 22px; border-right: 1px solid var(--line); }
+    .proof > div:last-child { border-right: 0; }
+    .label { display: block; margin-bottom: 10px; color: var(--muted); font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
+    .value { font-family: var(--mono); font-size: clamp(20px, 2.8vw, 32px); font-weight: 800; white-space: nowrap; }
+    .gpu { color: var(--green); }
+    .cpu { color: var(--red); }
+    section { margin-top: 74px; }
+    .section-head { margin-bottom: 20px; }
+    h2 { margin: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.03em; }
+    .filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 14px; }
+    select, button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 0; font: inherit; padding: 10px 12px; }
+    button { cursor: pointer; }
+    button:hover, button:focus-visible, select:focus-visible { border-color: var(--text); outline: none; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+    table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
+    th, td { padding: 13px 14px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    tbody tr:last-child td { border-bottom: 0; }
+    tbody tr:hover { background: #151b23; }
+    td.num, th.num { text-align: right; }
+    .receipt { text-decoration-color: var(--muted); text-underline-offset: 3px; }
+    .fallback { color: var(--red); }
+    .healthy { color: var(--green); }
+    .install { display: grid; grid-template-columns: 1fr auto; gap: 0; margin-top: 22px; border: 1px solid var(--line); background: var(--panel); }
+    pre { margin: 0; padding: 20px; overflow-x: auto; font-family: var(--mono); font-size: 14px; line-height: 1.65; }
+    .copy { border: 0; border-left: 1px solid var(--line); padding: 0 22px; }
+    .actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 22px; }
+    .actions a { font-weight: 700; text-underline-offset: 4px; }
+    footer { margin-top: 80px; padding: 28px 0; border-top: 1px solid var(--line); color: var(--muted); font-family: var(--mono); font-size: 13px; }
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      header { padding: 20px 0; }
+      main { padding-top: 24px; }
+      .proof { grid-template-columns: 1fr 1fr; }
+      .proof > div { border-bottom: 1px solid var(--line); }
+      .proof > div:nth-child(2) { border-right: 0; }
+      .proof > div:nth-child(3), .proof > div:nth-child(4) { border-bottom: 0; }
+      .install { grid-template-columns: 1fr; }
+      .copy { border-left: 0; border-top: 1px solid var(--line); padding: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <a class="brand" href="https://github.com/logxio/picchio">PICCHIO</a>
+      <a class="star" href="https://github.com/logxio/picchio">Star on GitHub ↗</a>
+    </header>
+    <main>
+      <h1>A 200 OK does not mean your local LLM used the GPU.</h1>
+
+      <div class="proof" aria-label="Same-file GPU and CPU comparison">
+        <div><span class="label">Placement</span><span class="value"><span class="gpu">33/33</span> → <span class="cpu">0/33</span></span></div>
+        <div><span class="label">Prefill</span><span class="value">22× slower</span></div>
+        <div><span class="label">Decode</span><span class="value">1.7× slower</span></div>
+        <div><span class="label">HTTP</span><span class="value">200 both</span></div>
+      </div>
+
+      <section id="benchmarks">
+        <div class="section-head">
+          <h2>Measured runs</h2>
+        </div>
+        <div class="filters">
+          <select id="machine" aria-label="Filter by machine"><option value="">All machines</option></select>
+          <select id="model" aria-label="Filter by model"><option value="">All models</option></select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Model</th><th>Machine</th><th>Engine</th><th>Placement</th><th class="num">Prefill</th><th class="num">Decode</th><th class="num">Wall</th><th class="num">J/tok</th><th>Verdict</th></tr></thead>
+            <tbody id="benchmark-rows"><tr><td colspan="9">Loading committed receipts…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="quantizers">
+        <div class="section-head">
+          <h2>What Q4_K_M contains</h2>
+        </div>
+        <div class="filters">
+          <select id="family" aria-label="Filter by model family"><option value="">All model families</option></select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Model</th><th>Publisher</th><th>Claimed</th><th class="num">Bpw</th><th class="num">Weights</th><th class="num">Tensors</th><th class="num">Types</th><th>SHA-256</th></tr></thead>
+            <tbody id="quantizer-rows"><tr><td colspan="8">Loading tensor cards…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="run">
+        <div class="section-head">
+          <h2>Add your machine</h2>
+        </div>
+        <div class="install">
+          <pre id="install-command">curl -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio
+chmod +x picchio
+./picchio</pre>
+          <button class="copy" id="copy" type="button">Copy</button>
+        </div>
+        <div class="actions">
+          <a href="https://github.com/logxio/picchio/issues/new?template=verdict-report.md">Submit a receipt ↗</a>
+          <a href="https://yansu.me/writing/a-200-ok-does-not-mean-your-llm-used-the-gpu/">Read the evidence ↗</a>
+          <a href="https://github.com/logxio/picchio">Source and raw logs ↗</a>
+        </div>
+      </section>
+    </main>
+    <footer>Every displayed number is generated from a committed Picchio receipt or tensor card.</footer>
+  </div>
+  <script>
+    const esc = value => String(value ?? "n/a").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const rate = value => value == null ? "n/a" : `${Number(value).toFixed(1)}`;
+    const compact = value => value == null ? "n/a" : new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+    let data = { benchmarks: [], quantizers: [] };
+
+    function options(select, values) {
+      [...new Set(values.filter(Boolean))].sort().forEach(value => {
+        const option = document.createElement("option");
+        option.value = option.textContent = value;
+        select.appendChild(option);
+      });
+    }
+
+    function renderBenchmarks() {
+      const machine = document.querySelector("#machine").value;
+      const model = document.querySelector("#model").value;
+      const rows = data.benchmarks.filter(row => (!machine || row.machine === machine) && (!model || row.model === model));
+      document.querySelector("#benchmark-rows").innerHTML = rows.map(row => {
+        const state = row.verdict === "HEALTHY" ? "healthy" : row.verdict === "SILENT CPU FALLBACK" ? "fallback" : "";
+        return `<tr><td><a class="receipt" href="${esc(row.receipt)}">${esc(row.model)}</a></td><td>${esc(row.machine)}</td><td>${esc(row.engine)}</td><td>${esc(row.placement)}</td><td class="num">${rate(row.prefill)}</td><td class="num">${rate(row.decode)}</td><td class="num">${rate(row.wallclock)}</td><td class="num">${rate(row.joulesPerToken)}</td><td class="${state}">${esc(row.verdict)}</td></tr>`;
+      }).join("") || '<tr><td colspan="9">No committed receipt matches both filters.</td></tr>';
+    }
+
+    function renderQuantizers() {
+      const family = document.querySelector("#family").value;
+      const rows = data.quantizers.filter(row => !family || row.family === family).sort((a, b) => a.family.localeCompare(b.family) || a.bitsPerWeight - b.bitsPerWeight);
+      document.querySelector("#quantizer-rows").innerHTML = rows.map(row => `<tr><td><a class="receipt" href="${esc(row.card)}">${esc(row.family)}</a></td><td>${esc(row.publisher)}</td><td>${esc(row.claimed)}</td><td class="num">${row.bitsPerWeight.toFixed(2)}</td><td class="num">${compact(row.weights)}</td><td class="num">${row.tensors}</td><td class="num">${row.types}</td><td>${esc(row.sha256)}…</td></tr>`).join("");
+    }
+
+    fetch("./receipts.json").then(response => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.json();
+    }).then(payload => {
+      data = payload;
+      options(document.querySelector("#machine"), data.benchmarks.map(row => row.machine));
+      options(document.querySelector("#model"), data.benchmarks.map(row => row.model));
+      options(document.querySelector("#family"), data.quantizers.map(row => row.family));
+      renderBenchmarks();
+      renderQuantizers();
+    }).catch(error => {
+      document.querySelector("#benchmark-rows").innerHTML = `<tr><td colspan="9">Could not load receipts: ${esc(error.message)}</td></tr>`;
+      document.querySelector("#quantizer-rows").innerHTML = '<tr><td colspan="8">Open the repository for the committed tensor cards.</td></tr>';
+    });
+
+    ["machine", "model"].forEach(id => document.querySelector(`#${id}`).addEventListener("change", renderBenchmarks));
+    document.querySelector("#family").addEventListener("change", renderQuantizers);
+    document.querySelector("#copy").addEventListener("click", async event => {
+      await navigator.clipboard.writeText(document.querySelector("#install-command").textContent);
+      event.currentTarget.textContent = "Copied";
+      setTimeout(() => { event.currentTarget.textContent = "Copy"; }, 1400);
+    });
+  </script>
+</body>
+</html>

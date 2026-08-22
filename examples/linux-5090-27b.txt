@@ -1,0 +1,16 @@
+model    Qwen3.8-27B Q4_K_M, 27.32 B, 15.32 GiB, llama.cpp b0.2.0-dev
+gpu      ENGAGED: 66/66 layers on GPU (CUDA: GeForce RTX 5090)
+os       gpu idle 0%, work 92%, mem +15.8 GiB, 343 W, 4.61 J/tok
+settings temp 1.0, top-k 20, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold      2921.5 tok/s     79.7 tok/s      6.0 tok/s
+  warm mid  3364.4 tok/s     81.5 tok/s     25.3 tok/s
+  warm span    3355~3374      81.5~81.5      23.4~27.2
+where the cold pass went (21.3 s, 8/16 threads)
+  load weights   18.2 s  ########################....   86%
+  prefill         0.3 s  ............................    1%
+  decode          1.6 s  ##..........................    7%
+  engine misc     1.2 s  ##..........................    6%
+VERDICT: HEALTHY. The GPU did the work. Quote the warm median
+  decode: 81.5 tok/s.
+-- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

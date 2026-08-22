@@ -1,0 +1,16 @@
+model    Qwen3.5-9B Q4_K_M, 8.95 B, 5.28 GiB, llama.cpp b0.2.0-dev
+gpu      ENGAGED: 33/33 layers on GPU (Vulkan: GeForce RTX 5090)
+os       gpu idle 0%, work 0%, mem +5.6 GiB, 9.5 W, 0.47 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold           abstain    119.1 tok/s      6.3 tok/s
+  warm mid  6206.3 tok/s    198.4 tok/s     51.0 tok/s
+  warm span    6200~6212    198.2~198.7      50.5~51.5
+where the cold pass went (20.1 s, 8/16 threads)
+  load weights    4.8 s  #######.....................   24%
+  prefill        13.3 s  ###################.........   66%
+  decode          1.1 s  #...........................    5%
+  engine misc     0.9 s  #...........................    4%
+VERDICT: HEALTHY. Cold prefill abstains: shader compilation put
+  it 107x off the warm passes, 58 against 6206 tok/s.
+-- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

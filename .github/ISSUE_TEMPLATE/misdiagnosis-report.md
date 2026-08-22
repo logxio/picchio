@@ -1,25 +1,23 @@
 ---
 name: Misdiagnosis report
-about: picchio got your machine wrong. These outrank everything else here.
-title: "misdiagnosis: <what it got wrong>"
+about: A verdict disagreed with engine or OS evidence.
+title: "misdiagnosis: <what disagreed>"
 labels: misdiagnosis
 ---
 
-A diagnostic that misreads machines it has never met is just a mirror
-with opinions, so this is the report I most want to receive.
+Paste the complete 16-line receipt:
 
-What picchio said:
-
-```
-(paste the verdict block)
+```text
+(paste the receipt here)
 ```
 
-What is actually true on this machine, and how you know (Activity
-Monitor, nvidia-smi, ollama ps, a competing benchmark, anything):
+What disagreed with the verdict, and what showed the disagreement
+(`nvidia-smi`, Activity Monitor, `ollama ps`, engine logs or another
+repeatable measurement):
 
-Evidence if you have it (raw engine stderr, `--json` output; both help
-a lot):
+Evidence if available:
 
+- raw engine output or `--json` output:
 - hardware (chip, RAM, OS):
-- engine and version (llama.cpp build or ollama version):
-- model file or tag, and quant:
+- engine and version (llama.cpp build or Ollama version):
+- model file or tag, including quant:

@@ -1,6 +1,7 @@
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
 gpu      NOT ENGAGED: 0/33 layers on GPU [--device none -ngl 0]
-os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W
+os       gpu idle 8%, work 5%, mem +0.3 GiB, 0.1 W, 0.01 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
 ctx 4096         prefill         decode      wallclock
   cold        22.8 tok/s      9.3 tok/s      2.5 tok/s
   warm mid    26.8 tok/s     12.2 tok/s      3.0 tok/s

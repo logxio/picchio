@@ -1,6 +1,7 @@
 model    Qwen3.5-9B-Q4_K_M.gguf, 8.95 B, 5.28 GiB, llama.cpp b9430
 gpu      ENGAGED: 33/33 layers on GPU (Metal: Apple M5)
-os       gpu idle 0%, work 99%, mem +6.0 GiB, 11.0 W
+os       gpu idle 0%, work 99%, mem +6.0 GiB, 11.0 W, 0.52 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
 ctx 4096         prefill         decode      wallclock
   cold       584.9 tok/s     21.0 tok/s     13.1 tok/s
   warm mid   588.0 tok/s     21.1 tok/s     15.5 tok/s

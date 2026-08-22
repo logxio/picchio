@@ -1,4 +1,4 @@
-$ python3 picchio.py compare mine.txt theirs.txt
+$ ./picchio compare mine.txt theirs.txt
 picchio compare
 A: examples/healthy-metal.txt
 B: examples/cpu-fallback.txt

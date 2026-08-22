@@ -1,0 +1,20 @@
+picchio id: bartowski-Qwen_Qwen3.5-4B-Q4_K_M.gguf
+  file       sha256 13c16f426047, 3,013,027,808 bytes
+  source     base_model.0.repo_url
+             https://huggingface.co/Qwen/Qwen3.5-4B-Base;
+             base_model.0.organization Qwen (the file's own claim,
+             verified against nothing)
+  claimed    Q4_K_M (general.file_type; the name agrees)
+  walked     441 tensors, 5 types, priced one by one:
+    q4_K      124 tensors   4.50 bits   44.2% of weight bytes
+    q6_K       49 tensors   6.56 bits   44.0% of weight bytes
+    q8_0       20 tensors   8.50 bits    8.7% of weight bytes
+    q5_K       16 tensors   5.50 bits    2.4% of weight bytes
+    f32       232 tensors  32.00 bits    0.7% of weight bytes
+  effective  5.55 bits per weight: 3,002,058,752 tensor bytes over
+             4,326,350,848 weights; the header's own offsets audit
+             to the same byte total
+  kv cache   a runtime choice, not in the model. K f16, V f16 on
+             the last measured run for this model and engine
+             (Qwen3.5 4B Q4_K_M, 2026-08-21, via llama.cpp
+             stderr); -ctk / -ctv move it per llama.cpp run

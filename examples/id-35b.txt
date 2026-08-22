@@ -1,4 +1,10 @@
 picchio id: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+  file       sha256 3dc2f4617794, 22,134,528,992 bytes
+  source     quantized_by Unsloth; repo_url
+             https://huggingface.co/unsloth; base_model.0.repo_url
+             https://huggingface.co/Qwen/Qwen3.6-35B-A3B;
+             base_model.0.organization Qwen (the file's own claim,
+             verified against nothing)
   claimed    Q4_K_M (general.file_type; the name agrees)
   walked     733 tensors, 5 types, priced one by one:
     q4_K       80 tensors   4.50 bits   54.6% of weight bytes
@@ -10,7 +16,8 @@ picchio id: Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
              over 34,660,610,688 weights; the header's own offsets
              audit to the same byte total
   kv cache   a runtime choice, not in the model. K f16, V f16 on
-             the last measured run here (Qwen3.5-9B Q4_K_M,
-             2026-07-14); -ctk / -ctv move it per run
+             the last measured run for this model and engine
+             (Qwen3.6-35B-A3B Q4_K_M, 2026-08-21, via llama.cpp
+             stderr); -ctk / -ctv move it per llama.cpp run
   experts    8 of 256 wake per token: about 3.5B of the 34.7B
              weights are read for any one token

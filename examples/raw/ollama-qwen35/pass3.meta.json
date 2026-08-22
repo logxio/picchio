@@ -1,5 +1,5 @@
 {
- "wall_s": 7.044913874997292,
+ "wall_s": 8.936253624997335,
  "engine": "ollama 0.31.1",
  "model_name": "qwen3.5:9b",
  "ps": {
@@ -17,8 +17,9 @@
    "parameter_size": "9.0B",
    "quantization_level": "Q4_K_M"
   },
-  "expires_at": "2026-07-12T09:35:36.6422+09:00",
+  "expires_at": "2026-08-21T16:11:59.803179-07:00",
   "size_vram": 5961437675,
   "context_length": 4096
- }
+ },
+ "prompt_nonce": "Run f2ef3c71 pass 03. "
 }

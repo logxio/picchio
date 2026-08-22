@@ -1,0 +1,11 @@
+$ ./picchio share block.txt --model Qwen3.5-9B-Q4_K_M.gguf --line
+Qwen3.5-9B-Q4_K_M.gguf | Q4_K_M | 5.07 bpw | sha256 9d14965c2799 | llama.cpp b9430 | Apple M5, 32 GB | ctx 4096 | KV f16/f16 | temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7 | pp 588.0 | tg 21.1 tok/s | picchio mp1 https://github.com/logxio/picchio
+
+$ ./picchio share block.txt --model Qwen3.5-9B-Q4_K_M.gguf --row
+| model | quant | bpw | engine | machine | ctx | KV | pp tok/s | tg tok/s | [picchio verdict](https://github.com/logxio/picchio) |
+| --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- |
+| Qwen3.5-9B-Q4_K_M.gguf | Q4_K_M | 5.07 | llama.cpp b9430 | Apple M5, 32 GB | 4096 | f16/f16 | 588.0 | 21.1 | HEALTHY |
+
+$ ./picchio share block.txt --line        (no --model)
+picchio share: bpw, sha256, kv came back n/a; run with --model MODEL to fill the file side
+Qwen3.5-9B-Q4_K_M.gguf | Q4_K_M | bpw n/a | sha256 n/a | llama.cpp b9430 | Apple M5, 32 GB | ctx 4096 | KV n/a | temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7 | pp 588.0 | tg 21.1 tok/s | picchio mp1 https://github.com/logxio/picchio

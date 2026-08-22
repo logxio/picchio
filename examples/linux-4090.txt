@@ -1,6 +1,7 @@
 model    model.gguf, 8.95 B, 5.28 GiB, llama.cpp llama-completion
 gpu      ENGAGED: 33/33 layers on GPU (CUDA: GeForce RTX 4090)
 os       gpu not sampled (not macos); evidence: engine+timing
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
 ctx 4096         prefill         decode      wallclock
   cold      6811.7 tok/s    137.6 tok/s     25.9 tok/s
   warm mid  6763.3 tok/s    138.0 tok/s     25.2 tok/s

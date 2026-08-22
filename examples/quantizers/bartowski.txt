@@ -1,4 +1,5 @@
 picchio id: Qwen_Qwen3.5-9B-Q4_K_M.gguf
+  file       sha256 d784ce9eda1a, 6,169,341,984 bytes
   claimed    Q4_K_M (general.file_type; the name agrees)
   walked     442 tensors, 5 types, priced one by one:
     q4_K      125 tensors   4.50 bits   53.0% of weight bytes

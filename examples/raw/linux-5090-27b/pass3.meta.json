@@ -1,0 +1,7 @@
+{
+ "wall_s": 4.670775029808283,
+ "engine": "llama.cpp b0.2.0-dev",
+ "model_name": "Qwen3.8-27B Q4_K_M",
+ "extra_args": [],
+ "prompt_nonce": "Run 102d6540 pass 03. "
+}

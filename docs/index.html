@@ -24,6 +24,7 @@
       --green: #00827f;
       --green-hover: #006b68;
       --red: #b42318;
+      --muted: #5f6368;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -43,12 +44,15 @@
     .value { font-family: var(--mono); font-size: clamp(19px, 2.2vw, 26px); font-weight: 800; white-space: nowrap; }
     .gpu { color: var(--green); }
     .cpu { color: var(--red); }
+    .proof-note { margin: 12px 0 0; color: var(--muted); font-family: var(--mono); font-size: 12px; }
     section { margin-top: 88px; }
     .section-head { margin-bottom: 20px; }
     h2 { margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif; font-size: clamp(34px, 4.8vw, 52px); font-weight: 600; letter-spacing: -.035em; }
     .filters { display: flex; gap: 10px; flex-wrap: wrap; margin: 22px 0 14px; }
     select, button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 0; font: inherit; padding: 10px 12px; }
+    select { max-width: 100%; }
     button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .45; }
     button:hover, button:focus-visible, select:focus-visible { color: var(--green-hover); outline: 2px solid var(--green); outline-offset: 2px; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; }
@@ -65,6 +69,9 @@
     .submit-actions { display: flex; align-items: center; gap: 18px; margin-top: 16px; }
     .submit { border: 0; background: var(--green); color: #ffffff; font-weight: 800; }
     .submit:disabled { cursor: default; opacity: .45; }
+    .privacy { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+    .share-preview { display: none; margin: 18px 0 0; padding: 16px; overflow-x: auto; background: var(--bg); font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+    .share-preview.visible { display: block; }
     .actions { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 22px; }
     .actions a { color: var(--green); font-weight: 800; }
     .actions a:hover, .actions a:focus-visible { color: var(--green-hover); }
@@ -93,9 +100,11 @@
         <div><span class="label">RTX 5090 · 32 GB</span><span class="value"><span class="gpu">66/66 GPU</span> · 81.5 tok/s</span></div>
         <div><span class="label">RTX 4070 SUPER · 12 GB</span><span class="value"><span class="cpu">38/66 GPU</span> · 5.7 tok/s</span></div>
       </div>
+      <p class="proof-note">Same Q4_K_M GGUF · ctx 4096 · decode</p>
 
       <div class="actions">
-        <a href="https://github.com/logxio/picchio/releases/download/v1.0.0/picchio.pyz">Download picchio.pyz ↓</a>
+        <a href="https://github.com/logxio/picchio/releases/tag/v1.0.0">Release v1.0.0 ↗</a>
+        <a href="https://github.com/logxio/picchio">Source ↗</a>
         <a href="https://github.com/logxio/picchio/blob/main/examples/windows-4070s-27b.txt">Read the 12 GB receipt ↗</a>
       </div>
       <div class="command"><code>python picchio.pyz</code></div>
@@ -106,9 +115,11 @@
         </div>
         <div class="submit-box">
           <textarea id="receipt" aria-label="Picchio result" placeholder="Paste the Picchio receipt here"></textarea>
+          <p class="privacy">Parsed locally in your browser. Zero data collected.</p>
+          <pre class="share-preview" id="share-preview" aria-live="polite"></pre>
           <div class="submit-actions">
-            <button class="submit" id="open-issue" type="button" disabled>Open GitHub issue ↗</button>
-            <a class="result" href="https://github.com/logxio/picchio#run-it">Get a result on GitHub ↗</a>
+            <button class="submit" id="copy-markdown" type="button" disabled>Copy as Markdown</button>
+            <button id="open-issue" type="button" disabled>Open GitHub issue ↗</button>
           </div>
         </div>
       </section>
@@ -169,8 +180,69 @@
     ["machine", "model"].forEach(id => document.querySelector(`#${id}`).addEventListener("change", renderBenchmarks));
     const receipt = document.querySelector("#receipt");
     const issue = document.querySelector("#open-issue");
+    const copy = document.querySelector("#copy-markdown");
+    const preview = document.querySelector("#share-preview");
+    let shareMarkdown = "";
+
+    const first = (value, pattern) => value.match(pattern)?.[1]?.trim() || "n/a";
+    const mdCell = value => String(value || "n/a").replace(/\r?\n/g, " ").replace(/\|/g, "\\|");
+
+    function parseReceipt(value) {
+      const modelLine = first(value, /^model\s+(.+)$/m);
+      const gpu = first(value, /^gpu\s+(.+)$/m);
+      const warm = value.match(/^\s*warm mid\s+([0-9.]+|n\/a|abstain)\s+(?:tok\/s\s+)?([0-9.]+|n\/a|abstain)\s+(?:tok\/s\s+)?([0-9.]+|n\/a|abstain)/mi);
+      const verdictLine = first(value, /^VERDICT:\s*(.+)$/m);
+      return {
+        model: modelLine.replace(/,\s*\d+(?:\.\d+)?\s+B.*$/, ""),
+        machine: first(value, /^-- picchio .*? on (.+)$/m),
+        placement: gpu.match(/(\d+\/\d+)\s+layers on GPU/i)?.[1] || gpu,
+        ctx: first(value, /^ctx\s+(\d+)/m),
+        prefill: warm?.[1] || "n/a",
+        decode: warm?.[2] || "n/a",
+        verdict: verdictLine.split(".")[0] || "n/a"
+      };
+    }
+
+    function markdownFor(value) {
+      const row = parseReceipt(value);
+      return [
+        "| model | machine | placement | ctx | prefill | decode | verdict |",
+        "|---|---|---|---:|---:|---:|---|",
+        `| ${mdCell(row.model)} | ${mdCell(row.machine)} | ${mdCell(row.placement)} | ${mdCell(row.ctx)} | ${mdCell(row.prefill)} | ${mdCell(row.decode)} | ${mdCell(row.verdict)} |`,
+        "",
+        "Generated by [Picchio](https://github.com/logxio/picchio)"
+      ].join("\n");
+    }
+
+    async function copyText(value) {
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(value);
+          return;
+        } catch {}
+      }
+      const helper = document.createElement("textarea");
+      helper.value = value;
+      helper.style.position = "fixed";
+      helper.style.opacity = "0";
+      document.body.appendChild(helper);
+      helper.select();
+      document.execCommand("copy");
+      helper.remove();
+    }
+
     receipt.addEventListener("input", () => {
-      issue.disabled = !receipt.value.trim();
+      const value = receipt.value.trim();
+      issue.disabled = copy.disabled = !value;
+      shareMarkdown = value ? markdownFor(value) : "";
+      preview.textContent = shareMarkdown;
+      preview.classList.toggle("visible", Boolean(value));
+    });
+    copy.addEventListener("click", async () => {
+      if (!shareMarkdown) return;
+      await copyText(shareMarkdown);
+      copy.textContent = "Copied";
+      window.setTimeout(() => { copy.textContent = "Copy as Markdown"; }, 1400);
     });
     issue.addEventListener("click", () => {
       const value = receipt.value.trim();

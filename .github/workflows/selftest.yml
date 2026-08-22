@@ -17,5 +17,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: replay raw engine logs against committed verdicts
+      - name: test Picchio
         run: python3 picchio.py --selftest

@@ -1,6 +1,0 @@
-{
- "wall_s": 2.5674061439931393,
- "engine": "llama.cpp b0.2.0-dev",
- "model_name": "Qwen3.5-9B Q4_K_M",
- "extra_args": []
-}

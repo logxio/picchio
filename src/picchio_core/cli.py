@@ -116,23 +116,20 @@ EXIT_CODES_BY_COMMAND = {
 
 
 def command_help_epilog():
-    lines = ["commands:"]
-    for _key, title, names in COMMAND_GROUPS:
-        lines += ["", "  " + title.lower() + ":"]
-        for name in names:
-            spec = COMMAND_CAPABILITIES[name]
-            lines.append("    " + spec["usage"])
-            lines.append("      " + spec["purpose"])
-    lines += ["", "  machine contract:",
-              "    " + COMMAND_CAPABILITIES["capabilities"]["usage"],
-              "      " + COMMAND_CAPABILITIES["capabilities"]["purpose"],
-              "",
-              "glossary:",
-              "  prefill    the model reading your prompt",
-              "  decode     the model writing the answer",
-              "  wallclock  generated tokens over total elapsed time",
-              "  offload    model layers placed on the GPU"]
-    return "\n".join(lines)
+    return """commands:
+
+  picchio TARGET
+    measure a GGUF, Ollama tag or running llama-server
+  picchio guard -- COMMAND
+    warn when a command leaves model layers on the CPU
+  picchio watch [PID|ollama]
+    watch GPU activity beside a running model
+  picchio monitor TARGET
+    catch a server that drops out of its normal performance lane
+  picchio compare A.txt B.txt
+    show the first changed setting, then compare the rates
+
+prefill is the model reading your prompt; decode is the model writing it."""
 
 
 def capabilities_value(version, protocol):

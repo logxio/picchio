@@ -4877,17 +4877,12 @@ def share_cli(argv):
 # ---------------------------------------------------------------- selftest
 
 def selftest():
-    """Replays the raw engine logs committed under examples/raw through
-    the same parser, aggregation and diagnosis used live, re-renders each
-    block, and requires it to match the committed example line for line
-    (footer excluded: it names the machine that ran the replay)."""
+    """Run Picchio's bundled parser and behavior checks."""
     here = os.path.dirname(os.path.abspath(__file__))
     rawroot = os.path.join(here, "examples", "raw")
     if not os.path.isdir(rawroot):
-        # single-file install (curl'd picchio.py with no repo tree beside
-        # it): the fixture replay needs examples/raw, but the logic that
-        # ships in this one file can still check itself. These run pure,
-        # no files, so --selftest means something without a clone.
+        # The public download carries pure logic checks that need no model,
+        # GPU, network connection or fixture directory.
         flat = [{"t": i * 0.25, "dev": d, "mem": 0, "gpu_w": 0.0}
                 for i, d in enumerate([1, 0, 2, 1])]
         cpu = dict(blank_pass(), offload_n=0, offload_total=33,
@@ -4934,11 +4929,10 @@ def selftest():
         from picchio_core.selftest import run_selftests
         core_ok, core_all, core_failures = run_selftests(
             [sys.executable, os.path.abspath(sys.argv[0])])
-        print("single-file mode (no examples/raw): logic self-checks "
-              "{}/{}, queue/parity {}/{}; clone the repo for the full "
-              "fixture replay".format(n_ok, len(checks), core_ok, core_all))
+        print("Picchio selftest: logic {}/{}, extended {}/{}".format(
+            n_ok, len(checks), core_ok, core_all))
         if core_failures:
-            print("queue/parity failures: " + ", ".join(core_failures))
+            print("failures: " + ", ".join(core_failures))
         sys.exit(0 if n_ok == len(checks) and core_ok == core_all else 1)
     fx_ok = fx_all = rp_ok = rp_all = 0
     for name in sorted(os.listdir(rawroot)):
@@ -6551,9 +6545,8 @@ def main():
     from picchio_core.cli import command_help_epilog
     ap = argparse.ArgumentParser(
         prog="picchio",
-        description="A local LLM benchmark that records the file, settings, "
-                    "GPU placement and three performance lanes behind a "
-                    "number.",
+        description="Catch local LLM CPU fallback and see the GPU placement, "
+                    "prefill, decode, memory and power behind your run.",
         epilog=command_help_epilog(),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -6562,38 +6555,29 @@ def main():
                          "the url of a running llama-server "
                          "(http://host:port)")
     ap.add_argument("--version", action="version",
-                    version="picchio {} (protocol {})".format(
-                        VERSION, PROTOCOL))
+                    version="picchio {}".format(VERSION))
     ap.add_argument("--bin", help="llama.cpp binary (default: find "
                                   "llama-completion or llama-cli on PATH)")
     ap.add_argument("--passes", type=int, default=3, metavar="N",
-                    help="measurement passes; the first is the cold one, "
-                         "the verdict reports the warm median and span "
-                         "(default 3, min 2)")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--explain", type=float, metavar="TOKS",
-                    help="classify a tok/s number you saw somewhere against "
-                         "this machine's measured rates")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--json", action="store_true",
                     help="write only JSON to stdout; human verdict goes to "
                          "stderr")
     ap.add_argument("--share", choices=("line", "row", "post"),
                     help="after measuring, write a postable line, Markdown "
-                         "row or post to stdout; the full receipt stays on "
+                         "row or post to stdout; the full result stays on "
                          "stderr")
     ap.add_argument("--keep-logs", metavar="DIR",
-                    help="save the raw engine output of each pass into DIR "
-                         "(the evidence behind the verdict)")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--no-telemetry", action="store_true",
-                    help="skip the OS-side GPU sampling; the os line then "
-                         "says the verdict rests on engine+timing only")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--ctx-sweep", nargs="?", const="4096,16384,32768",
                     metavar="LIST", dest="ctx_sweep",
-                    help="re-measure the three lanes at each context size in "
-                         "LIST (default 4096,16384,32768), each filled to "
-                         "real depth, and report the decode decay slope")
+                    help=argparse.SUPPRESS)
     ap.add_argument("--selftest", action="store_true",
-                    help="replay examples/raw through the parser and "
-                         "diagnosis; verify the committed verdicts reproduce")
+                    help=argparse.SUPPRESS)
     ap.add_argument("extra", nargs="*", default=[],
                     help="args after -- go straight to the llama.cpp engine "
                          "(e.g. -- --device none -ngl 0)")

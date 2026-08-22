@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Picchio Receipt Explorer</title>
+  <title>Picchio: local LLM GPU check</title>
   <meta name="description" content="Compare local LLM speed with the GPU placement, settings, memory and power that produced it.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://logxio.github.io/picchio/">
   <meta property="og:title" content="CPU fallback: prefill 22× slower, decode only 1.7×">
-  <meta property="og:description" content="Every number links to the committed Picchio receipt and raw evidence behind it.">
+  <meta property="og:description" content="Compare GPU placement, prefill, decode, memory and power across Apple M5, RTX 4090 and RTX 5090.">
   <meta property="og:image" content="https://logxio.github.io/picchio/social-preview.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="CPU fallback: prefill 22× slower, decode only 1.7×">
-  <meta name="twitter:description" content="Every number links to the committed Picchio receipt and raw evidence behind it.">
+  <meta name="twitter:description" content="Compare GPU placement, prefill, decode, memory and power across Apple M5, RTX 4090 and RTX 5090.">
   <meta name="twitter:image" content="https://logxio.github.io/picchio/social-preview.png">
   <style>
     :root {
@@ -59,7 +59,7 @@
     tbody tr:last-child td { border-bottom: 0; }
     tbody tr:hover { background: #151b23; }
     td.num, th.num { text-align: right; }
-    .receipt { text-decoration-color: var(--muted); text-underline-offset: 3px; }
+    .result { text-decoration-color: var(--muted); text-underline-offset: 3px; }
     .fallback { color: var(--red); }
     .healthy { color: var(--green); }
     .install { display: grid; grid-template-columns: 1fr auto; gap: 0; margin-top: 22px; border: 1px solid var(--line); background: var(--panel); }
@@ -99,7 +99,7 @@
 
       <section id="benchmarks">
         <div class="section-head">
-          <h2>Measured runs</h2>
+          <h2>Real runs</h2>
         </div>
         <div class="filters">
           <select id="machine" aria-label="Filter by machine"><option value="">All machines</option></select>
@@ -108,29 +108,14 @@
         <div class="table-wrap">
           <table>
             <thead><tr><th>Model</th><th>Machine</th><th>Engine</th><th>Placement</th><th class="num">Prefill</th><th class="num">Decode</th><th class="num">Wall</th><th class="num">J/tok</th><th>Verdict</th></tr></thead>
-            <tbody id="benchmark-rows"><tr><td colspan="9">Loading committed receipts…</td></tr></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section id="quantizers">
-        <div class="section-head">
-          <h2>What Q4_K_M contains</h2>
-        </div>
-        <div class="filters">
-          <select id="family" aria-label="Filter by model family"><option value="">All model families</option></select>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Model</th><th>Publisher</th><th>Claimed</th><th class="num">Bpw</th><th class="num">Weights</th><th class="num">Tensors</th><th class="num">Types</th></tr></thead>
-            <tbody id="quantizer-rows"><tr><td colspan="7">Loading tensor cards…</td></tr></tbody>
+            <tbody id="benchmark-rows"><tr><td colspan="9">Loading results…</td></tr></tbody>
           </table>
         </div>
       </section>
 
       <section id="run">
         <div class="section-head">
-          <h2>Add your machine</h2>
+          <h2>Run it on your machine</h2>
         </div>
         <div class="install">
           <pre id="install-command">curl -fsSL https://raw.githubusercontent.com/logxio/picchio/main/public/picchio.pyz -o picchio
@@ -139,19 +124,18 @@ chmod +x picchio
           <button class="copy" id="copy" type="button">Copy</button>
         </div>
         <div class="actions">
-          <a href="https://github.com/logxio/picchio/issues/new?template=verdict-report.md">Submit a receipt ↗</a>
-          <a href="https://yansu.me/writing/a-200-ok-does-not-mean-your-llm-used-the-gpu/">Read the evidence ↗</a>
-          <a href="https://github.com/logxio/picchio">Source and raw logs ↗</a>
+          <a href="https://github.com/logxio/picchio/issues/new?template=verdict-report.md">Add your result ↗</a>
+          <a href="https://yansu.me/writing/a-200-ok-does-not-mean-your-llm-used-the-gpu/">See how I caught CPU fallback ↗</a>
+          <a href="https://github.com/logxio/picchio">Get Picchio ↗</a>
         </div>
       </section>
     </main>
-    <footer>Every displayed number is generated from a committed Picchio receipt or tensor card.</footer>
+    <footer>Run Picchio on your model and add your machine.</footer>
   </div>
   <script>
     const esc = value => String(value ?? "n/a").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     const rate = value => value == null ? "n/a" : `${Number(value).toFixed(1)}`;
-    const compact = value => value == null ? "n/a" : new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
-    let data = { benchmarks: [], quantizers: [] };
+    let data = { benchmarks: [] };
 
     function options(select, values) {
       [...new Set(values.filter(Boolean))].sort().forEach(value => {
@@ -167,33 +151,23 @@ chmod +x picchio
       const rows = data.benchmarks.filter(row => (!machine || row.machine === machine) && (!model || row.model === model));
       document.querySelector("#benchmark-rows").innerHTML = rows.map(row => {
         const state = row.verdict === "HEALTHY" ? "healthy" : row.verdict === "SILENT CPU FALLBACK" ? "fallback" : "";
-        return `<tr><td><a class="receipt" href="${esc(row.receipt)}">${esc(row.model)}</a></td><td>${esc(row.machine)}</td><td>${esc(row.engine)}</td><td>${esc(row.placement)}</td><td class="num">${rate(row.prefill)}</td><td class="num">${rate(row.decode)}</td><td class="num">${rate(row.wallclock)}</td><td class="num">${rate(row.joulesPerToken)}</td><td class="${state}">${esc(row.verdict)}</td></tr>`;
-      }).join("") || '<tr><td colspan="9">No committed receipt matches both filters.</td></tr>';
+        return `<tr><td><a class="result" href="${esc(row.result)}">${esc(row.model)}</a></td><td>${esc(row.machine)}</td><td>${esc(row.engine)}</td><td>${esc(row.placement)}</td><td class="num">${rate(row.prefill)}</td><td class="num">${rate(row.decode)}</td><td class="num">${rate(row.wallclock)}</td><td class="num">${rate(row.joulesPerToken)}</td><td class="${state}">${esc(row.verdict)}</td></tr>`;
+      }).join("") || '<tr><td colspan="9">No result matches both filters.</td></tr>';
     }
 
-    function renderQuantizers() {
-      const family = document.querySelector("#family").value;
-      const rows = data.quantizers.filter(row => !family || row.family === family).sort((a, b) => a.family.localeCompare(b.family) || a.bitsPerWeight - b.bitsPerWeight);
-      document.querySelector("#quantizer-rows").innerHTML = rows.map(row => `<tr><td><a class="receipt" href="${esc(row.card)}">${esc(row.family)}</a></td><td>${esc(row.publisher)}</td><td>${esc(row.claimed)}</td><td class="num">${row.bitsPerWeight.toFixed(2)}</td><td class="num">${compact(row.weights)}</td><td class="num">${row.tensors}</td><td class="num">${row.types}</td></tr>`).join("");
-    }
-
-    fetch("./receipts.json").then(response => {
+    fetch("./results.json").then(response => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
     }).then(payload => {
       data = payload;
       options(document.querySelector("#machine"), data.benchmarks.map(row => row.machine));
       options(document.querySelector("#model"), data.benchmarks.map(row => row.model));
-      options(document.querySelector("#family"), data.quantizers.map(row => row.family));
       renderBenchmarks();
-      renderQuantizers();
     }).catch(error => {
-      document.querySelector("#benchmark-rows").innerHTML = `<tr><td colspan="9">Could not load receipts: ${esc(error.message)}</td></tr>`;
-      document.querySelector("#quantizer-rows").innerHTML = '<tr><td colspan="7">Open the repository for the committed tensor cards.</td></tr>';
+      document.querySelector("#benchmark-rows").innerHTML = `<tr><td colspan="9">Could not load results: ${esc(error.message)}</td></tr>`;
     });
 
     ["machine", "model"].forEach(id => document.querySelector(`#${id}`).addEventListener("change", renderBenchmarks));
-    document.querySelector("#family").addEventListener("change", renderQuantizers);
     document.querySelector("#copy").addEventListener("click", async event => {
       await navigator.clipboard.writeText(document.querySelector("#install-command").textContent);
       event.currentTarget.textContent = "Copied";

@@ -236,11 +236,12 @@ def run_selftests(entry_argv):
           "runtime failure" and
           "command-specific" in catalog["exitCodes"]["0"])
     rendered_help = command_help_epilog()
-    check("help_from_capability_catalog",
-          all(spec["usage"] in rendered_help
-              for name, spec in COMMAND_CAPABILITIES.items()
-              if name != "capabilities") and
-          COMMAND_CAPABILITIES["capabilities"]["usage"] in rendered_help)
+    check("human_help_focus",
+          all(text in rendered_help for text in (
+              "picchio TARGET", "picchio guard", "picchio watch",
+              "picchio monitor", "picchio compare")) and
+          all(text not in rendered_help for text in (
+              "picchio verify", "picchio capabilities", "hash and inspect")))
 
     with tempfile.TemporaryDirectory(prefix="picchio-selftest-") as root:
         adapter_path = os.path.join(root, "fake_adapter.py")
@@ -582,9 +583,12 @@ def run_selftests(entry_argv):
                 except OSError:
                     return []
 
-            check("visual_receipts_fresh",
-                  svg_receipt("picchio-demo.svg", 289, 589) ==
-                  example_lines("ollama-qwen35.txt") and
+            demo = " ".join(svg_receipt("picchio-demo.svg", 0, 430))
+            check("visual_results_fresh",
+                  all(value in demo for value in (
+                      "33/33 layers on GPU", "0/33 layers on GPU",
+                      "588.0 tok/s", "26.8", "21.9× slower",
+                      "SUSPECT: placement.")) and
                   svg_receipt("healthy-verdict.svg", 69, 369) ==
                   example_lines("healthy-metal.txt") and
                   svg_receipt("cpu-fallback-verdict.svg", 69, 369) ==

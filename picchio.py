@@ -2739,16 +2739,20 @@ def verify_block(b):
         f.append("wallclock {:.1f} >= decode {:.1f} tok/s: wall time "
                  "includes load and prefill, it cannot be faster".format(
                      wc, dc))
-    # 2. the prefill/decode ratio is a scale free signature of placement:
-    #    a full-gpu run measures 20-44x on the calibrated machines, a cpu
-    #    run 2-5x. A ratio that fights the placement claim is the
-    #    ollama-ps-lies case (#7323 family), now caught in a static paste.
+    # 2. a full-gpu claim under a cpu shaped ratio is the ollama-ps-lies
+    #    case (#7323 family), caught here in a static paste: measured
+    #    full-gpu runs sit at 23-54x, genuinely cpu-bound ones at 2-7x.
+    #    There is deliberately no mirror rule for a high ratio under a
+    #    cpu claim. The ratio says where the compute ran, the placement
+    #    line says where the weights live, and any build carrying a gpu
+    #    backend separates the two: -ngl 0 keeps every layer off the
+    #    card and still runs the prefill graph on it, measured at 106x,
+    #    the highest ratio in these fixtures and an honest run. Asking
+    #    the os meter, rule 3, is how this block answers "did the gpu
+    #    do work" without inferring it from a rate.
     if ratio is not None and claim == "gpu" and ratio < 5:
         f.append("claims full gpu but prefill is only {:.1f}x decode, a cpu "
                  "shaped ratio (a real gpu run is 20x+)".format(ratio))
-    if ratio is not None and claim == "cpu" and ratio >= 15:
-        f.append("claims no gpu but prefill is {:.1f}x decode, a gpu shaped "
-                 "ratio a cpu run never reaches".format(ratio))
     # 3. the os meter is an independent witness, held against the claim
     #    only when it was sampled and the machine was idle enough to read;
     #    a block whose own os line already abstained is not judged on it

@@ -547,9 +547,10 @@ def run_selftests(entry_argv):
         if os.path.exists(caffeinate):
             wrapped = subprocess.Popen([
                 caffeinate, "-i", sys.executable, "-c",
-                "import time; time.sleep(.2)", "/tmp/llama-server"])
-            wrapped_identity = stable_process_identity(wrapped.pid)
-            wrapped.wait(timeout=2)
+                "import time; time.sleep(1.5)", "/tmp/llama-server"])
+            wrapped_identity = stable_process_identity(wrapped.pid,
+                                                       timeout=.5)
+            wrapped.wait(timeout=3)
             wrapper_ok = wrapped_identity is not None and \
                 wrapped_identity.get("executablePath") and \
                 "llama-server" not in wrapped_identity["executablePath"] and \

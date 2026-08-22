@@ -2,7 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>catch local LLM CPU fallback before you trust tok/s</h1>
+<h1>Qwen3.8-27B ran 14× slower when 28 layers spilled to the CPU</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -12,29 +12,25 @@
 
 <p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse real results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<img src="assets/picchio-demo.svg" width="680" alt="A local LLM returns HTTP 200 while Picchio catches CPU fallback with 0 of 33 layers on the GPU">
+<img src="assets/picchio-demo.svg" width="680" alt="Qwen3.8-27B returns HTTP 200 while Picchio catches 28 of 66 layers running on the CPU and a 14 times decode slowdown">
 
 </div>
 
-**CPU FALLBACK: 0/33 layers on the GPU.** The same request returned **HTTP
-200 OK** and generated text.
-
-On the same Apple M5, with the same Qwen3.5-9B file:
+**The same Qwen3.8-27B file returned HTTP 200 on both cards: 66/66 GPU layers
+and 81.5 tok/s on 32 GB; 38/66 and 5.7 tok/s on 12 GB.**
 
 <table align="center">
   <thead>
-    <tr><th></th><th align="right">GPU</th><th align="right">silent CPU fallback</th></tr>
+    <tr><th>card</th><th align="right">layers on GPU</th><th align="right">decode</th></tr>
   </thead>
   <tbody>
-    <tr><td>layers on GPU</td><td align="right">33/33</td><td align="right">0/33</td></tr>
-    <tr><td>prefill</td><td align="right">588.0 tok/s</td><td align="right">26.8 tok/s</td></tr>
-    <tr><td>decode</td><td align="right">21.1 tok/s</td><td align="right">12.2 tok/s</td></tr>
-    <tr><td>HTTP response</td><td align="right">200</td><td align="right">200</td></tr>
+    <tr><td>RTX 5090, 32 GB</td><td align="right">66/66</td><td align="right">81.5 tok/s</td></tr>
+    <tr><td>RTX 4070 SUPER, 12 GB</td><td align="right">38/66</td><td align="right">5.7 tok/s</td></tr>
   </tbody>
 </table>
 
-The engine reported zero GPU layers. The operating system measured 0% GPU
-work. Prefill fell from 588.0 to 26.8 tok/s.
+Picchio printed `PARTIAL OFFLOAD. 28 layers sat on CPU` and
+`memory fit: saw 11069 MiB free, gave 38/66 layers`.
 
 ## Run it
 
@@ -104,26 +100,12 @@ I measured these with Picchio:
 [Open every result](https://logxio.github.io/picchio/) or compare the outputs
 in [examples/](examples/).
 
-### The same 27B file on two cards
-
-Qwen3.8-27B is 15.32 GiB of weights. A 32 GB card holds all of it; a 12 GB
-card holds 38 of the 66 layers and runs the rest on the CPU.
-
-| card | placement | prefill | decode |
-|---|---|---:|---:|
-| RTX 5090, 32 GB | 66/66 | 3364.4 | 81.5 |
-| RTX 4070 SUPER, 12 GB | 38/66 | 504.1 | 5.7 |
-
-Same file, same quant, same engine. Decode differs by 14x, and Picchio says
-which of the two you are looking at: `memory fit: saw 11069 MiB free, gave
-38/66 layers`.
-
 ## What Picchio reads
 
 - llama.cpp: per-layer placement, applied sampling settings and timing
 - Ollama: CPU/GPU weight split and timing
 - macOS: Apple GPU activity, memory, power and energy per token
-- NVIDIA Linux: GPU activity, memory, power and energy per token through NVML
+- NVIDIA on Linux and Windows: GPU activity, memory, power and energy per token through NVML
 - AMD Linux: GPU activity and memory through amdgpu sysfs. **AMD readings are reference-only for now. I am looking for real Radeon runs from the community; an AMD verdict block is the contribution I want most.**
 
 Point Picchio at a GGUF path, an Ollama tag or a running llama-server URL.

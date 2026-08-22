@@ -6,7 +6,7 @@
 
   <g visibility="visible">
     <animate attributeName="visibility" dur="12s" repeatCount="indefinite" calcMode="discrete" values="visible;hidden;visible" keyTimes="0;.32;1"/>
-    <text x="28" y="72" fill="#e6edf3" font-size="14">$ curl http://127.0.0.1:8080/v1/chat/completions</text>
+    <text x="28" y="72" fill="#e6edf3" font-size="14">$ Qwen3.8-27B on RTX 4070 SUPER 12 GB</text>
     <rect x="28" y="100" width="337" height="250" rx="8" fill="#101820" stroke="#30363d"/>
     <text x="50" y="140" fill="#8b949e" font-size="13">LOCAL LLM SERVER</text>
     <text x="50" y="188" fill="#3fb950" font-size="21" font-weight="700">HTTP 200 OK</text>
@@ -15,26 +15,26 @@
 
     <rect x="395" y="100" width="337" height="250" rx="8" fill="#1a1214" stroke="#da3633" stroke-width="2"/>
     <text x="417" y="140" fill="#f85149" font-size="13" font-weight="700">PICCHIO</text>
-    <text x="417" y="184" fill="#f85149" font-size="21" font-weight="700">CPU FALLBACK</text>
-    <text x="417" y="230" fill="#e6edf3" font-size="17" font-weight="700">0/33 layers on GPU</text>
-    <text x="417" y="272" fill="#f85149" font-size="17" font-weight="700">26.8 tok/s</text>
+    <text x="417" y="184" fill="#f85149" font-size="19" font-weight="700">PARTIAL OFFLOAD</text>
+    <text x="417" y="230" fill="#e6edf3" font-size="17" font-weight="700">38/66 layers on GPU</text>
+    <text x="417" y="272" fill="#f85149" font-size="17" font-weight="700">28 layers on CPU</text>
     <text x="28" y="395" fill="#e6edf3" font-size="17" font-weight="700">The request worked.</text>
-    <text x="236" y="395" fill="#f85149" font-size="17" font-weight="700">The GPU did not.</text>
+    <text x="236" y="395" fill="#f85149" font-size="17" font-weight="700">Decode fell to 5.7 tok/s.</text>
   </g>
 
   <g visibility="hidden">
     <animate attributeName="visibility" dur="12s" repeatCount="indefinite" calcMode="discrete" values="hidden;visible;hidden;hidden" keyTimes="0;.32;.65;1"/>
-    <text x="28" y="72" fill="#f85149" font-size="20" font-weight="700">CPU FALLBACK — CONFIRMED</text>
+    <text x="28" y="72" fill="#f85149" font-size="20" font-weight="700">SAME 27B FILE. 14.3× DECODE GAP.</text>
     <rect x="28" y="104" width="704" height="246" rx="8" fill="#101820"/>
-    <text x="52" y="142" fill="#8b949e" font-size="13">ENGINE</text>
-    <text x="210" y="142" fill="#e6edf3" font-size="15">offloaded 0/33 layers to GPU</text>
-    <text x="52" y="182" fill="#8b949e" font-size="13">OS</text>
-    <text x="210" y="182" fill="#e6edf3" font-size="15">GPU work 0% · memory +0.3 GiB</text>
-    <text x="52" y="230" fill="#3fb950" font-size="13">HEALTHY</text>
-    <text x="210" y="230" fill="#e6edf3" font-size="15">33/33 layers on GPU · 588.0 tok/s</text>
-    <text x="52" y="278" fill="#f85149" font-size="13">CAUGHT</text>
-    <text x="210" y="278" fill="#f85149" font-size="15" font-weight="700">0/33 · 26.8 tok/s · 21.9× slower</text>
-    <text x="28" y="395" fill="#f85149" font-size="16" font-weight="700">SUSPECT: placement.</text>
+    <text x="52" y="142" fill="#3fb950" font-size="13">RTX 5090</text>
+    <text x="210" y="142" fill="#e6edf3" font-size="15">32 GB · 66/66 GPU · 81.5 tok/s</text>
+    <text x="52" y="190" fill="#f85149" font-size="13">RTX 4070S</text>
+    <text x="210" y="190" fill="#f85149" font-size="15" font-weight="700">12 GB · 38/66 GPU · 5.7 tok/s</text>
+    <text x="52" y="238" fill="#8b949e" font-size="13">PICCHIO</text>
+    <text x="210" y="238" fill="#e6edf3" font-size="15">28 layers sat on CPU</text>
+    <text x="52" y="286" fill="#8b949e" font-size="13">WHY</text>
+    <text x="210" y="286" fill="#e6edf3" font-size="15">11069 MiB free gave 38/66 layers</text>
+    <text x="28" y="395" fill="#f85149" font-size="16" font-weight="700">PARTIAL OFFLOAD: 14.3× slower decode.</text>
   </g>
 
   <g visibility="hidden">

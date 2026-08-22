@@ -47,7 +47,7 @@ from picchio_core.share import (  # noqa: E402
 from picchio_core.vet import (  # noqa: E402
     VET_NOTES, vet_cli, vet_quant_note, vet_rate_lane, vet_scan)
 
-VERSION = "0.1.0"
+VERSION = "1.0.0"
 # Measurement protocol tag, printed in the block footer. If the prompt
 # size, generation length, pass structure or aggregation ever change,
 # this bumps, so numbers from different protocols never get compared as

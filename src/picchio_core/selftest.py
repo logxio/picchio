@@ -592,9 +592,9 @@ def run_selftests(entry_argv):
             demo = " ".join(svg_receipt("picchio-demo.svg", 0, 430))
             check("visual_results_fresh",
                   all(value in demo for value in (
-                      "33/33 layers on GPU", "0/33 layers on GPU",
-                      "588.0 tok/s", "26.8", "21.9× slower",
-                      "SUSPECT: placement.")) and
+                      "Qwen3.8-27B", "38/66 layers on GPU",
+                      "28 layers on CPU", "81.5 tok/s", "5.7 tok/s",
+                      "14.3× slower decode")) and
                   svg_receipt("healthy-verdict.svg", 69, 369) ==
                   example_lines("healthy-metal.txt") and
                   svg_receipt("cpu-fallback-verdict.svg", 69, 369) ==

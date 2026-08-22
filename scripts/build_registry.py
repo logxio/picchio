@@ -27,7 +27,8 @@ BENCHMARKS = (
     "linux-5090-cuda.txt",
     "linux-5090-vulkan-nonce.txt",
     "linux-5090-ollama-nonce.txt",
-    "ollama-35b.txt",
+    "ollama-35b-ctx4k.txt",
+    "ollama-35b-ctx256k.txt",
 )
 
 def _read(path):

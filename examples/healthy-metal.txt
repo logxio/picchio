@@ -11,6 +11,6 @@ where the cold pass went (9.7 s, 4/10 threads)
   prefill         1.3 s  ####........................   13%
   decode          6.1 s  #################...........   62%
   engine misc     0.6 s  ##..........................    6%
-VERDICT: HEALTHY. The GPU did the work. Quote the warm median
-  decode: 21.1 tok/s.
+HEALTHY. The GPU did the work. Quote the warm median decode:
+  21.1 tok/s. 588 tok/s is prefill: reading speed, not writing.
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

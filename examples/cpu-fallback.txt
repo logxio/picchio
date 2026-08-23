@@ -11,6 +11,6 @@ where the cold pass went (49.9 s, 4/10 threads, weights cached)
   prefill        33.4 s  ###################.........   67%
   decode         13.7 s  ########....................   27%
   engine misc     0.8 s  ............................    2%
-VERDICT: SILENT CPU FALLBACK. Prefill: 93 s per 2500 tokens.
+SILENT CPU FALLBACK. Prefill: 93 s per 2500 tokens.
 WHY: forced by flag: --device none -ngl 0
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

@@ -204,7 +204,9 @@
       const model = modelFacts(modelLine);
       const gpu = first(value, /^gpu\s+(.+)$/m);
       const warm = value.match(/^\s*warm mid\s+([0-9.]+|n\/a|abstain)\s+(?:tok\/s\s+)?([0-9.]+|n\/a|abstain)\s+(?:tok\/s\s+)?([0-9.]+|n\/a|abstain)/mi);
-      const verdictLine = first(value, /^VERDICT:\s*(.+)$/m);
+      // the label is gone from what picchio prints; blocks pasted
+      // from older runs still carry it, so both shapes are read
+      const verdictLine = first(value, /^(?:VERDICT:\s*)?((?:HEALTHY|SILENT CPU FALLBACK|PARTIAL OFFLOAD|NO PLACEMENT EVIDENCE|NO TIMING EVIDENCE|CONFLICTING EVIDENCE)\b.*)$/m);
       return {
         ...model,
         machine: first(value, /^-- picchio .*? on (.+)$/m),

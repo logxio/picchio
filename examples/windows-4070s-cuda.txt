@@ -11,6 +11,6 @@ where the cold pass went (4.5 s, 8/16 threads, weights cached)
   prefill         0.2 s  #...........................    4%
   decode          1.6 s  ##########..................   36%
   engine misc     0.9 s  #####.......................   19%
-VERDICT: HEALTHY. The GPU did the work. Quote the warm median
-  decode: 78.2 tok/s.
+HEALTHY. The GPU did the work. Quote the warm median decode:
+  78.2 tok/s.
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 4070 SUPER, 32 GB, Windows 10

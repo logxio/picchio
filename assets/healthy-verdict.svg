@@ -17,7 +17,7 @@
 <text x="22" y="269" xml:space="preserve"><tspan fill="#e6edf3">  prefill         1.3 s  ####........................   13%</tspan></text>
 <text x="22" y="289" xml:space="preserve"><tspan fill="#e6edf3">  decode          6.1 s  #################...........   62%</tspan></text>
 <text x="22" y="309" xml:space="preserve"><tspan fill="#e6edf3">  engine misc     0.6 s  ##..........................    6%</tspan></text>
-<text x="22" y="329" xml:space="preserve"><tspan fill="#e6edf3">VERDICT: </tspan><tspan fill="#3fb950" font-weight="bold">HEALTHY</tspan><tspan fill="#e6edf3">. The GPU did the work. Quote the warm median</tspan></text>
-<text x="22" y="349" xml:space="preserve"><tspan fill="#e6edf3">  decode: 21.1 tok/s.</tspan></text>
+<text x="22" y="329" xml:space="preserve"><tspan fill="#3fb950" font-weight="bold">HEALTHY</tspan><tspan fill="#e6edf3">. The GPU did the work. Quote the warm median decode:</tspan></text>
+<text x="22" y="349" xml:space="preserve"><tspan fill="#e6edf3">  21.1 tok/s. 588 tok/s is prefill: reading speed, not writing.</tspan></text>
 <text x="22" y="369" xml:space="preserve"><tspan fill="#8b949e">-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1</tspan></text>
 </svg>

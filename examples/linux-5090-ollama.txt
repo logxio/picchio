@@ -11,6 +11,6 @@ where the cold pass went (45.5 s)
   prefill        18.4 s  ###########.................   40%
   decode          1.6 s  #...........................    3%
   engine misc     0.0 s  ............................    0%
-VERDICT: HEALTHY. Prefill abstains: the cold pass ran 547x off
-  the rest, 42 against 21951 tok/s, so one is not prefill.
+HEALTHY. Prefill abstains: the cold pass ran 547x off the rest,
+  42 against 21951 tok/s, so one is not prefill.
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

@@ -1970,7 +1970,9 @@ def colorize(text, stream=None):
               ("HEALTHY", GREEN), ("PASS", GREEN), ("FLAG", RED))
     out = []
     for line in text.splitlines():
-        if line.startswith("VERDICT: "):
+        if re.match(r"^(?:VERDICT: )?(HEALTHY|SILENT CPU FALLBACK|PARTIAL OFFLOAD|"
+                    r"NO PLACEMENT EVIDENCE|NO TIMING EVIDENCE|"
+                    r"CONFLICTING EVIDENCE|PASS|FLAG)\b", line):
             for state, col in states:
                 if state in line:
                     line = line.replace(state, BOLD + col + state + RESET, 1)
@@ -2289,7 +2291,7 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
     if lead:
         para = " ".join(lead) + " " + para
     fixed = len(out) + (1 if why else 0) + 1  # + WHY + footer
-    vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
+    vlines = textwrap.wrap("{}. {}".format(state, para),
                            width=WIDTH - 2, subsequent_indent="  ")
     while len(vlines) > max(1, HEIGHT - fixed):
         body = para.rstrip()[:-1]
@@ -2301,7 +2303,7 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
             if cut < 0:
                 break
             para = para[:cut] + "."
-        vlines = textwrap.wrap("VERDICT: {}. {}".format(state, para),
+        vlines = textwrap.wrap("{}. {}".format(state, para),
                                width=WIDTH - 2, subsequent_indent="  ")
     room = max(1, HEIGHT - fixed)
     if len(vlines) > room:
@@ -2609,7 +2611,10 @@ def parse_block(text):
             # part of what a reader of the block is judging, so a
             # "not recorded: ..." line reads back as itself, not as None
             b["settings"] = m.group(1)
-        m = re.match(r"VERDICT: (\S.*)", line)
+        # the label is gone from what picchio prints, but blocks
+        # pasted from older runs still carry it and reading those is
+        # exactly what verify exists for, so both shapes come in
+        m = re.match(r"(?:VERDICT: )?(\S.*)", line)
         if m and b["verdict"] is None:
             for st in ("SILENT CPU FALLBACK", "PARTIAL OFFLOAD",
                        "NO PLACEMENT EVIDENCE", "NO TIMING EVIDENCE",
@@ -2883,11 +2888,11 @@ def render_verify(src, b, verdict, flags):
     if verdict == "PASS":
         witnessed = b["os_note"] is None and (b["os_work"] is not None
                                               or os_residency_witness(b))
-        out.append("VERDICT: PASS. placement, the timing signature"
+        out.append("PASS. placement, the timing signature"
                    + (" and the os meter" if witnessed else "")
                    + " all describe the same run.")
     else:
-        out.append("VERDICT: FLAG. {} physical contradiction{} in this "
+        out.append("FLAG. {} physical contradiction{} in this "
                    "block:".format(len(flags),
                                    "" if len(flags) == 1 else "s"))
         for fl in flags:
@@ -5502,14 +5507,14 @@ def selftest():
             "ctx 4096         prefill         decode      wallclock\n"
             "  cold         2.0 tok/s      1.0 tok/s      0.5 tok/s\n"
             "  warm mid 100.0 tok/s      5.0 tok/s      4.0 tok/s\n"
-            "VERDICT: HEALTHY. synthetic\n")
+            "HEALTHY. synthetic\n")
         resident = parse_block(
             "model    test, 1.0 B, Q4_K_M, 5.0 GiB, llama.cpp b1\n"
             "gpu      ENGAGED: 1/1 layers on GPU\n"
             "os       gpu idle 0%, work 0%, mem +5.0 GiB\n"
             "ctx 4096         prefill         decode      wallclock\n"
             "  warm mid  100.0 tok/s      5.0 tok/s      4.0 tok/s\n"
-            "VERDICT: HEALTHY. synthetic\n")
+            "HEALTHY. synthetic\n")
         checks = [
             monitor_classify(588.0, 21.1)[0] == "OK",
             monitor_classify(26.8, 12.2)[0] == "FLAG",
@@ -5790,8 +5795,8 @@ def selftest():
     #    model: it must stay quiet, or every -ngl 0 run reads as a lie.
     swap = re.sub(r"gpu      ENGAGED: 33/33 layers on GPU[^\n]*",
                   "gpu      NOT ENGAGED: 0/33 layers on GPU", ha)
-    swap = swap.replace("VERDICT: HEALTHY. The GPU did the work.",
-                        "VERDICT: SILENT CPU FALLBACK.")
+    swap = swap.replace("HEALTHY. The GPU did the work.",
+                        "SILENT CPU FALLBACK.")
     swap = re.sub(r"(?m)^(os\s+gpu idle \d+%, work )\d+(%.*)$",
                   r"\g<1>0\g<2>", swap)
     sv, sf = verify_block(parse_block(swap))

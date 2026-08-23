@@ -11,6 +11,6 @@ where the cold pass went (29.2 s, 8/16 threads, weights cached)
   prefill        12.6 s  ############................   43%
   decode         13.3 s  #############...............   45%
   engine misc     0.8 s  #...........................    3%
-VERDICT: CONFLICTING EVIDENCE. The engine says 33/33 layers on
-  GPU; the OS saw the GPU stay flat while the tokens were made.
+CONFLICTING EVIDENCE. The engine says 33/33 layers on GPU; the
+  OS saw the GPU stay flat while the tokens were made.
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 4070 SUPER, 32 GB, Windows 10

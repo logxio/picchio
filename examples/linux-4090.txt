@@ -11,6 +11,6 @@ where the cold pass went (4.9 s, 48/96 threads, weights cached)
   prefill         0.1 s  #...........................    2%
   decode          0.9 s  #####.......................   19%
   engine misc     1.6 s  #########...................   33%
-VERDICT: HEALTHY. The GPU did the work. Quote the warm median
-  decode: 138.0 tok/s.
+HEALTHY. The GPU did the work. Quote the warm median decode:
+  138.0 tok/s.
 -- picchio v0.1.0 mp1 on AMD EPYC 7402 24-Core Processor, 504 GB, Linux 5.15.0-119-generic

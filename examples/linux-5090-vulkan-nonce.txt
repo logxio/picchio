@@ -11,6 +11,6 @@ where the cold pass went (20.1 s, 8/16 threads)
   prefill        13.3 s  ###################.........   66%
   decode          1.1 s  #...........................    5%
   engine misc     0.9 s  #...........................    4%
-VERDICT: HEALTHY. Cold prefill abstains: shader compilation put
-  it 107x off the warm passes, 58 against 6206 tok/s.
+HEALTHY. Cold prefill abstains: shader compilation put it 107x
+  off the warm passes, 58 against 6206 tok/s.
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

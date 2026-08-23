@@ -1,7 +1,7 @@
 ---
-name: Verdict report
+name: Result report
 about: Add a measured local LLM result. HEALTHY results count too.
-title: "verdict: <chip> <model>"
+title: "result: <chip> <model>"
 labels: verdict-report
 ---
 

@@ -11,6 +11,6 @@ where the cold pass went (11.3 s)
   prefill         1.6 s  ####........................   14%
   decode          7.1 s  #################...........   62%
   engine misc     0.0 s  ............................    0%
-VERDICT: HEALTHY. Pre-run gpu 43% at 0.6 W: not compute, so
-  still judged. Ollama reports 100% of weights in GPU memory.
+HEALTHY. Pre-run gpu 43% at 0.6 W: not compute, so still judged.
+  Ollama reports 100% of weights in GPU memory.
 -- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

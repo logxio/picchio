@@ -17,7 +17,7 @@
 <text x="22" y="269" xml:space="preserve"><tspan fill="#e6edf3">  prefill        33.4 s  ###################.........   67%</tspan></text>
 <text x="22" y="289" xml:space="preserve"><tspan fill="#e6edf3">  decode         13.7 s  ########....................   27%</tspan></text>
 <text x="22" y="309" xml:space="preserve"><tspan fill="#e6edf3">  engine misc     0.8 s  ............................    2%</tspan></text>
-<text x="22" y="329" xml:space="preserve"><tspan fill="#e6edf3">VERDICT: </tspan><tspan fill="#f85149" font-weight="bold">SILENT CPU FALLBACK</tspan><tspan fill="#e6edf3">. Prefill: 93 s per 2500 tokens.</tspan></text>
+<text x="22" y="329" xml:space="preserve"><tspan fill="#f85149" font-weight="bold">SILENT CPU FALLBACK</tspan><tspan fill="#e6edf3">. Prefill: 93 s per 2500 tokens.</tspan></text>
 <text x="22" y="349" xml:space="preserve"><tspan fill="#8b949e">WHY: forced by flag: --device none -ngl 0</tspan></text>
 <text x="22" y="369" xml:space="preserve"><tspan fill="#8b949e">-- picchio v0.1.0 mp1 on Apple M5, 32 GB, macOS 26.5.1</tspan></text>
 </svg>

@@ -11,6 +11,6 @@ where the cold pass went (2.4 s, 8/16 threads, weights cached)
   prefill         0.1 s  #...........................    4%
   decode          0.6 s  ######......................   23%
   engine misc     1.0 s  ###########.................   41%
-VERDICT: HEALTHY. The GPU did the work. Quote the warm median
-  decode: 226.4 tok/s.
+HEALTHY. The GPU did the work. Quote the warm median decode:
+  226.4 tok/s.
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 5090, 30 GB, Linux 6.14.0-37-generic

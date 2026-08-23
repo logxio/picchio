@@ -11,6 +11,6 @@ where the cold pass went (73.6 s, 8/16 threads)
   prefill         1.8 s  #...........................    2%
   decode         21.9 s  ########....................   30%
   engine misc     3.0 s  #...........................    4%
-VERDICT: PARTIAL OFFLOAD. 28 layers sat on CPU.
+PARTIAL OFFLOAD. 28 layers sat on CPU.
 WHY: memory fit: saw 11069 MiB free, gave 38/66 layers
 -- picchio v0.1.0 mp1 on AMD Ryzen 7 7800X3D 8-Core Processor + GeForce RTX 4070 SUPER, 32 GB, Windows 10

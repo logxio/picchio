@@ -11,6 +11,6 @@ where the cold pass went (12.7 s)
   prefill         1.0 s  ##..........................    8%
   decode          3.9 s  #########...................   31%
   engine misc     0.0 s  ............................    0%
-VERDICT: HEALTHY. Ollama reports 100% of weights in GPU memory.
-  Quote the warm median decode: 33.5 tok/s.
+HEALTHY. Ollama reports 100% of weights in GPU memory. Quote the
+  warm median decode: 33.5 tok/s.
 -- picchio v1.0.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

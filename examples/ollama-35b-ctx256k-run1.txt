@@ -11,6 +11,6 @@ where the cold pass went (27.4 s)
   prefill         7.2 s  #######.....................   26%
   decode          9.2 s  #########...................   33%
   engine misc     0.2 s  ............................    1%
-VERDICT: PARTIAL OFFLOAD. 9% of weights sat on CPU.
+PARTIAL OFFLOAD. 9% of weights sat on CPU.
 WHY: unknown: not in the ollama api (check the server log)
 -- picchio v1.0.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

@@ -149,9 +149,7 @@ function render(head, total) {
   let kind = "go", word = "FITS", say, after;
   if (chat.light === "fits") {
     say = `The whole model fits in ${machine.label}.`;
-    after = "Fitting is not the same as running well. Picchio has caught an "
-          + "engine reporting 33/33 layers on the GPU while the GPU sat at 0%. "
-          + "Once it is running, check with <code>picchio MODEL</code>.";
+    after = "";
     if (long.light !== "fits") {
       kind = "wait"; word = "PARTIAL";
       say = `Fits ${machine.label} for normal chat, but long documents push it onto the CPU.`;
@@ -169,15 +167,33 @@ function render(head, total) {
     after = "It will still answer, slowly enough that most people stop waiting.";
   }
 
+  // When the two contexts answer differently, the single-context table
+  // contradicts the card above it: a reader sees 5.9 against a 9.0
+  // budget and every layer on the card, and concludes the calculator is
+  // broken. The number that actually busts the budget is the long one,
+  // so on that card it is the number on the page.
+  const split = (r) => (r.split ? `${r.split[0]} of ${r.split[1]}` : "—");
+  const over = (r) => (r.need > r.budget
+    ? ` <span class="over">over budget</span>` : "");
+  const parts = chat.light !== long.light
+    ? [["memory it needs, normal chat", gib(chat.need) + over(chat)],
+       ["memory it needs, long document", gib(long.need) + over(long)]]
+    : [["memory it needs", gib(chat.need) + over(chat)]];
+  const layers = chat.light !== long.light
+    ? [["layers on the GPU, normal chat", split(chat)],
+       ["layers on the GPU, long document", split(long)]]
+    : [["layers on the GPU", split(chat)]];
   const rows = [
     ["weights", gib(total)],
-    ["memory it needs", gib(chat.need)],
+    ...parts,
     [`${machine.label} budget`, gib(chat.budget)],
-    ["layers on the GPU", chat.split ? `${chat.split[0]} of ${chat.split[1]}` : "—"],
+    ...layers,
   ];
   show(card(kind, word, say, after)
     + `<table>${rows.map(([k, v]) => `<tr><td class="k">${k}</td><td>${v}</td></tr>`).join("")}</table>`
-    + `<a class="star" href="https://github.com/logxio/picchio">Star Picchio on GitHub</a>`);
+    + `<div class="hook">Not sure if the engine is lying to you? Engines
+         often report 100% GPU usage while your GPU sits at 0%.</div>`
+    + `<a class="star" href="https://github.com/logxio/picchio#run-it">Verify your GPU</a>`);
 }
 
 chips();

@@ -31,9 +31,6 @@ button.m{font:inherit;font-size:13px;padding:7px 12px;border:1.5px solid var(--l
   border-radius:999px;background:var(--card);color:var(--ink);cursor:pointer}
 button.m:hover{border-color:var(--muted)}
 button.m[aria-pressed=true]{border-color:var(--go);background:var(--go);color:#fff}
-.probe{margin-top:14px;font-size:13px;color:var(--muted)}
-.probe code{font-family:var(--mono);font-size:12px;background:#efefec;
-  padding:2px 6px;border-radius:5px}
 #out{margin-top:32px}
 .light{border:1.5px solid var(--line);border-left-width:6px;border-radius:12px;
   background:var(--card);padding:20px 22px}
@@ -43,13 +40,15 @@ button.m[aria-pressed=true]{border-color:var(--go);background:var(--go);color:#f
   font-size:14px;color:var(--muted)}
 .go{border-left-color:var(--go)} .go .word{color:var(--go)}
 .wait{border-left-color:var(--wait)} .wait .word{color:var(--wait)}
+.over{color:var(--wait);font-weight:600}
 .stop{border-left-color:var(--stop)} .stop .word{color:var(--stop)}
 .dim{border-left-color:var(--muted)} .dim .word{color:var(--muted);font-size:17px}
 table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px}
 td{padding:7px 0;border-bottom:1px solid var(--line)}
 td:last-child{text-align:right;font-family:var(--mono)}
 td.k{color:var(--muted)}
-.star{display:inline-block;margin-top:26px;font-size:14px;padding:10px 16px;
+.hook{margin-top:28px;font-size:14px;color:var(--ink);max-width:52ch}
+.star{display:inline-block;margin-top:12px;font-size:14px;padding:10px 16px;
   border:1.5px solid var(--ink);border-radius:9px;color:var(--ink);
   text-decoration:none;font-weight:560}
 </style>
@@ -69,10 +68,6 @@ td.k{color:var(--muted)}
 
 <div class="pick">Your machine</div>
 <div class="grid" id="machines"></div>
-<div class="probe">Numbers assume an idle machine. Something already on the
-  card takes layers away from the model. &nbsp;Or run
-  <code>picchio plan MODEL</code> to read your own.</div>
-
 <div id="out"></div>
 
 </div>

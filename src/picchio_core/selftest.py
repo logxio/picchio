@@ -229,7 +229,9 @@ def run_selftests(entry_argv):
           mapped_commands == set(COMMAND_CAPABILITIES) - {"capabilities"} and
           set(catalog["commands"]) == set(COMMAND_CAPABILITIES) and
           "--share line|row|post|bug-report" in
-          catalog["commands"]["diagnose"]["options"])
+          catalog["commands"]["diagnose"]["options"] and
+          catalog["commands"]["plan"]["options"] ==
+          ["--ctx TOKENS", "--kv TYPE"])
     check("capabilities_exit_meanings",
           catalog["exitCodesByCommand"]["diagnose"]["3"] ==
           "partial offload" and
@@ -243,7 +245,7 @@ def run_selftests(entry_argv):
           all(text in rendered_help for text in (
               "picchio TARGET", "picchio guard -- COMMAND",
               "picchio guard PID|ollama", "picchio guard URL|TAG",
-              "picchio compare")) and
+              "picchio plan MODEL", "picchio compare")) and
           all(text not in rendered_help for text in (
               "picchio watch", "picchio monitor", "picchio verify",
               "picchio capabilities", "hash and inspect")))

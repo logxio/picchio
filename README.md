@@ -50,6 +50,7 @@ file and uses only the standard library.
 | I want to… | Run |
 |---|---|
 | catch CPU fallback and measure the run | `./picchio MODEL` |
+| see how many layers fit on this GPU at my context and KV type | `./picchio plan MODEL --ctx 262144 --kv q8_0` |
 | guard something already running and get told the moment it leaves the GPU: your own command, a loaded model, a server | `./picchio guard -- COMMAND` · `./picchio guard ollama` · `./picchio guard http://127.0.0.1:8080` |
 | compare two runs and show the first changed setting | `./picchio compare before.txt after.txt` |
 | turn one run into a complete Ollama or llama.cpp Issue report | `./picchio MODEL --share bug-report` |

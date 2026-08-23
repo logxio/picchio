@@ -53,8 +53,9 @@ COMMAND_CAPABILITIES = {
         "purpose": "hash and inspect the exact GGUF or Ollama model",
     },
     "plan": {
-        "usage": "picchio plan [MODEL]",
-        "purpose": "estimate fit before loading; label speed estimates",
+        "usage": "picchio plan [MODEL] [--ctx TOKENS] [--kv TYPE]",
+        "purpose": "show how many layers fit on this GPU before loading",
+        "options": ["--ctx TOKENS", "--kv TYPE"],
     },
     "guard": {
         "usage": "picchio guard [--keep-logs DIR] -- COMMAND",
@@ -133,6 +134,8 @@ def command_help_epilog():
 
   picchio TARGET
     measure a GGUF, Ollama tag or running llama-server
+  picchio plan MODEL --ctx TOKENS --kv TYPE
+    show how many layers fit on this GPU before loading
   picchio guard -- COMMAND
     warn when a command you launch leaves model layers on the CPU
   picchio guard PID|ollama

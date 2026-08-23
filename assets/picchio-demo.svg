@@ -28,7 +28,7 @@
     <text x="210" y="170" fill="#e6edf3" font-size="17">32 GB · 66/66 GPU · 81.5 tok/s</text>
     <text x="52" y="244" fill="#f85149" font-size="13">RTX 4070S</text>
     <text x="210" y="244" fill="#f85149" font-size="17" font-weight="700">12 GB · 38/66 GPU · 5.7 tok/s</text>
-    <text x="52" y="316" fill="#8b949e" font-size="13">Q4_K_M GGUF · llama.cpp · ctx 4096 · decode</text>
+    <text x="52" y="316" fill="#8b949e" font-size="13">Q4_K_M GGUF · llama.cpp · ctx 4096 · 1 request · decode</text>
   </g>
 
   <g visibility="hidden">

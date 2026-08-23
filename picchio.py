@@ -4530,8 +4530,7 @@ def plan_cli(argv):
               "context the kv cache is counted at; a long context is often\n"
               "what pushes a model off the card. --kv prices the cache at\n"
               "f16 (the default), bf16, f32, q8_0 or q4_0. With no MODEL,\n"
-              "accounts\n"
-              "every model found on this machine. Estimates are labeled\n"
+              "it accounts every model found here. Estimates are labeled\n"
               "and never appear in a verdict block.")
         sys.exit(0)
     ctx, kv = CTX, "f16"

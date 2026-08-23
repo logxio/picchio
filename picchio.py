@@ -634,10 +634,25 @@ def ollama_has_model(tag):
         return False
 
 
+def ollama_tag(tag):
+    """ollama's own spelling of a tag.
+
+    It appends :latest when the version is left off, and its api answers
+    in that spelling, so `picchio mymodel` compared literally against a
+    reply saying `mymodel:latest` misses. The miss surfaces as "ollama
+    gave no memory split" and drops the run to NO PLACEMENT EVIDENCE,
+    which reads as the engine withholding evidence when it was the match
+    that was wrong. Typing the bare name is the normal habit."""
+    name, _, ver = str(tag or "").partition(":")
+    return "{}:{}".format(name, ver or "latest") if name else ""
+
+
 def ollama_ps_entry(tag):
+    want = ollama_tag(tag)
     try:
         for m in ollama_api("/api/ps", timeout=15).get("models", []):
-            if m.get("name") == tag or m.get("model") == tag:
+            if want and want in (ollama_tag(m.get("name")),
+                                 ollama_tag(m.get("model"))):
                 return m
     except (urllib.error.URLError, OSError, ValueError):
         pass
@@ -3304,8 +3319,7 @@ def ollama_model_path(tag):
     """The blob a tag's weights live in, read from the manifest rather
     than guessed: /api/show reports sizes, not paths."""
     base = ollama_store()
-    name, _, ver = tag.partition(":")
-    ver = ver or "latest"
+    name, _, ver = ollama_tag(tag).partition(":")
     reg = "registry.ollama.ai"
     if "/" not in name:
         name = "library/" + name
@@ -4380,7 +4394,8 @@ def plan_target(arg):
     size = None
     try:
         for m in ollama_api("/api/tags", timeout=5).get("models", []):
-            if m.get("name") == arg or m.get("model") == arg:
+            if ollama_tag(arg) in (ollama_tag(m.get("name")),
+                                   ollama_tag(m.get("model"))):
                 size = m.get("size")
     except (urllib.error.URLError, OSError, ValueError):
         pass
@@ -6187,7 +6202,7 @@ def selftest():
     # same walk, account and expert arithmetic used live (the big real
     # files stay out of ci; they are the manual acceptance step). The
     # engine side of the cross check reads the committed real stderr.
-    id_ok, id_all = 0, 12
+    id_ok, id_all = 0, 13
 
     def synth_id_img(specs, kvs, strings=()):
         # a minimal legal gguf v3 image: kv section, tensor table,
@@ -6303,8 +6318,18 @@ def selftest():
     if kr["kv_types"] == ["f16", "f16"] \
             and kr["kv_source"] == "Ollama runner log":
         id_ok += 1
-    # 9: identity cards select an exact model+engine partition and never
-    #    borrow the global last run from another model
+    # 9: ollama answers in its own spelling, with :latest filled in.
+    #    A bare name typed by hand has to match that reply or the run
+    #    loses its memory split and drops to NO PLACEMENT EVIDENCE while
+    #    the gpu was in fact holding the weights.
+    if ollama_tag("m") == "m:latest" and ollama_tag("m:latest") == "m:latest" \
+            and ollama_tag("q:9b") == "q:9b" \
+            and ollama_tag("lib/m") == "lib/m:latest" \
+            and ollama_tag("") == "" and ollama_tag(None) == "" \
+            and ollama_model_path("nope") is None:
+        id_ok += 1
+    # 10: identity cards select an exact model+engine partition and never
+    #     borrow the global last run from another model
     ck = measurement_key("ollama", "qwen3.5:9b")
     cr = {"model_name": "other:latest", "kv_types": ["q4_0", "q4_0"],
           "measurement_key": measurement_key("ollama", "other:latest"),
@@ -6315,7 +6340,7 @@ def selftest():
                 cr, measurement_key("ollama", "missing:latest"),
                 "missing:latest") is None:
         id_ok += 1
-    # 10: the identity line is sha256 over every byte plus the exact
+    # 11: the identity line is sha256 over every byte plus the exact
     #     count, so two people holding the same file print the same
     #     string. Written to a real file, then checked against hashlib
     #     over the same bytes.

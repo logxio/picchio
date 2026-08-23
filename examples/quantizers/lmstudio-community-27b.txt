@@ -1,0 +1,17 @@
+picchio id: Qwen3.8-27B-Q4_K_M.gguf
+  file       sha256 e00082f779fa, 16,810,714,336 bytes
+  source     not recorded: this file carries no origin keys, so
+             who produced it cannot be read off the file
+  claimed    Q4_K_M (general.file_type; the name agrees)
+  walked     866 tensors, 3 types, priced one by one:
+    q4_K      439 tensors   4.50 bits   73.0% of weight bytes
+    q6_K       67 tensors   6.56 bits   26.9% of weight bytes
+    f32       360 tensors  32.00 bits    0.1% of weight bytes
+  effective  4.92 bits per weight: 16,799,719,424 tensor bytes
+             over 27,320,697,856 weights; the header's own offsets
+             audit to the same byte total
+  kv cache   a runtime choice, not in the model, and no measured
+             run for this model and engine has recorded it yet.
+             Measure once (./picchio MODEL) and the card
+             cites that run; a local Ollama run needs readable
+             runner logs

@@ -1,0 +1,16 @@
+model    qwen3.6:35b-a3b, 34.7 B, Q4_K_M, 26.24 GiB, ollama 0.31.1
+gpu      PARTIAL: 91% of weights in GPU memory (ollama ps)
+os       gpu idle 6%, work 77%, mem +24.2 GiB, 5.3 W, 0.37 J/tok
+settings not recorded: the ollama api returns no sampling settings
+ctx 262144       prefill         decode      wallclock
+  cold       109.4 tok/s     14.0 tok/s      4.7 tok/s
+  warm mid   142.8 tok/s     19.5 tok/s      9.8 tok/s
+  warm span      102~183      19.4~19.6       8.4~11.1
+where the cold pass went (27.4 s)
+  load weights   10.9 s  ###########.................   40%
+  prefill         7.2 s  #######.....................   26%
+  decode          9.2 s  #########...................   33%
+  engine misc     0.2 s  ............................    1%
+VERDICT: PARTIAL OFFLOAD. 9% of weights sat on CPU.
+WHY: unknown: not in the ollama api (check the server log)
+-- picchio v1.0.0 mp1 on Apple M5, 32 GB, macOS 26.5.1

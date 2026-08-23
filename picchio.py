@@ -2764,6 +2764,16 @@ def verify_block(b):
         if claim == "cpu" and b["os_work"] >= 50:
             f.append("claims no gpu but its own os line saw the gpu busy at "
                      "{}% while the tokens were made".format(b["os_work"]))
+    # the same witness in the other direction, and the one the deleted
+    # ratio rule was reaching for: weights that never went to the card
+    # cannot show up as a model sized step in its memory. A gpu-backend
+    # build asked for -ngl 0 keeps the graph there and moves 1.5 GiB for
+    # a 5.3 GiB model, well under the half the witness asks for, so an
+    # honest forced fallback stays quiet here while a gpu run relabelled
+    # as cpu does not.
+    if claim == "cpu" and b["os_note"] is None and os_residency_witness(b):
+        f.append("claims no gpu but its own os line saw {:.1f} GiB land in "
+                 "gpu memory, a model sized step".format(b["os_mem"]))
     # 4. the headline must match the block's own placement line; a
     #    consistent body under a lying VERDICT word is the cheapest forgery
     if b["verdict"] == "HEALTHY" and claim in ("cpu", "partial"):
@@ -5425,7 +5435,7 @@ def selftest():
     # verify: the two committed blocks pass, and blocks tampered by one
     # edit fail. Fixtures are built in memory from the real examples, so
     # no forged block ships in the repo; ha and fb are read above.
-    ve_ok, ve_all = 0, 7
+    ve_ok, ve_all = 0, 8
     if verify_block(parse_block(ha))[0] == "PASS":
         ve_ok += 1
     if verify_block(parse_block(fb))[0] == "PASS":
@@ -5459,7 +5469,25 @@ def selftest():
     iv, iff = verify_block(parse_block(inv))
     if iv == "FLAG" and any("outrun" in x for x in iff):
         ve_ok += 1
-    # 5: a packed warm label leaves one separator before the first
+    # 5: weights that never went to the card cannot show up as a model
+    #    sized step in its memory, so a gpu run relabelled as cpu is
+    #    caught even after its utilization is zeroed too. The honest
+    #    counterpart is the forced fallback on a gpu-backend build,
+    #    which keeps the graph on the card and moves well under half a
+    #    model: it must stay quiet, or every -ngl 0 run reads as a lie.
+    swap = re.sub(r"gpu      ENGAGED: 33/33 layers on GPU[^\n]*",
+                  "gpu      NOT ENGAGED: 0/33 layers on GPU", ha)
+    swap = swap.replace("VERDICT: HEALTHY. The GPU did the work.",
+                        "VERDICT: SILENT CPU FALLBACK.")
+    swap = re.sub(r"(?m)^(os\s+gpu idle \d+%, work )\d+(%.*)$",
+                  r"\g<1>0\g<2>", swap)
+    sv, sf = verify_block(parse_block(swap))
+    quiet = parse_block(re.sub(r"(?m)^(os\s+gpu[^\n]*mem \+)[\d.]+( GiB.*)$",
+                               r"\g<1>1.5\g<2>", swap))
+    if sv == "FLAG" and any("model sized step" in x for x in sf) \
+            and verify_block(quiet)[0] == "PASS":
+        ve_ok += 1
+    # 6: a packed warm label leaves one separator before the first
     #    number. It must still outrank the cold row, or verify silently
     #    grades a five digit run on its cold pass and calls it a lie.
     tight = re.sub(r"(?m)^(\s{2}warm mid)\s{2,}", r"\1 ", ha)
@@ -5467,7 +5495,7 @@ def selftest():
     if tp and tp["row"] == "warm mid" \
             and tp["rates"] == parse_block(ha)["rates"]:
         ve_ok += 1
-    # 6: the live judge abstains on a flat utilization median when a
+    # 7: the live judge abstains on a flat utilization median when a
     #    model sized memory step proves the weights landed. Offline
     #    verification casts the same vote; a bursty gpu whose median
     #    reads 0 is not thereby a forgery.

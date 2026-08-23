@@ -206,6 +206,12 @@ def pid_alive(pid):
         pid = int(pid)
     except (TypeError, ValueError):
         return False
+    if pid <= 0:
+        # posix reads these as process groups, not processes: kill(-1, 0)
+        # asks about every process this user can signal and succeeds,
+        # which would report a corrupt lock file's pid as a live owner
+        # and leave the artifact locked forever.
+        return False
     if WINDOWS:
         return _win_process(pid) is not None
     try:

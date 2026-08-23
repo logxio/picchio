@@ -7,9 +7,10 @@ of the first few MiB is enough: the tensor data that follows is never
 read. An ollama tag is one step further back, its manifest naming the
 blob and its size before any byte of the blob is fetched.
 
-Nothing here falls back to a full download, and nothing guesses a size:
-a source that will not serve a range, or a header that will not parse
-inside the cap, is reported as such.
+Nothing here falls back to a full download and nothing guesses a size.
+Every read is capped, including from a server that ignores the range and
+starts sending the whole file, and a header that will not parse inside
+the cap is reported instead of estimated around.
 """
 
 import json
@@ -29,8 +30,18 @@ class RemoteError(Exception):
     sees, so it names the source and what it did."""
 
 
+_GATED = (". The file is gated: open it in a browser, accept its terms, "
+          "and download it yourself")
+_WHAT_THE_CODE_MEANS = {
+    401: _GATED, 403: _GATED,
+    404: ". Nothing is published at that address, so check the spelling",
+}
+
+
 def _get(url, start=None, end=None, timeout=30):
-    """One ranged GET. Returns (status, headers, body-or-stream)."""
+    """One ranged GET, as an open response. Redirects are followed
+    with the range intact, which is the whole path on hugging face:
+    /resolve/ answers 302 and the file itself comes from a cdn host."""
     request = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT, "Accept-Encoding": "identity"})
     if start is not None:
@@ -38,8 +49,9 @@ def _get(url, start=None, end=None, timeout=30):
     try:
         return urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
-        raise RemoteError("{} answered HTTP {}".format(
-            urllib.parse.urlsplit(url).netloc, exc.code))
+        raise RemoteError("{} answered HTTP {}{}".format(
+            urllib.parse.urlsplit(url).netloc, exc.code,
+            _WHAT_THE_CODE_MEANS.get(exc.code, "")))
     except urllib.error.URLError as exc:
         raise RemoteError("{} did not answer: {}".format(
             urllib.parse.urlsplit(url).netloc, exc.reason))
@@ -48,16 +60,17 @@ def _get(url, start=None, end=None, timeout=30):
             urllib.parse.urlsplit(url).netloc, exc))
 
 
-def _total_size(response, fetched):
-    """The whole file's size, from the range reply's own accounting.
+def _total_size(response):
+    """The whole file's size, from the reply's own accounting.
 
-    Content-Range is authoritative on a 206; Content-Length only tells
-    the truth when the server ignored the range and sent everything."""
+    Content-Range is authoritative on a 206. A 200 means the range was
+    ignored and the body is the whole file, so its Content-Length is
+    the total; on a 206 that same header measures only the slice."""
     rng = response.headers.get("Content-Range") or ""
     match = re.search(r"/(\d+)\s*$", rng)
     if match:
         return int(match.group(1))
-    if response.status == 200:
+    if getattr(response, "status", None) == 200:
         length = response.headers.get("Content-Length")
         if length and length.isdigit():
             return int(length)
@@ -71,18 +84,23 @@ def head_bytes(url, reader, window=FIRST_WINDOW, cap=MAX_WINDOW):
     Tokenizer vocabularies live in the same table as the geometry and
     can push the end of the header megabytes in, so the window doubles
     rather than betting on one size. Each attempt is a fresh ranged GET:
-    the reader consumes a stream once and cannot be rewound."""
+    the reader consumes a stream once and cannot be rewound.
+
+    The read is capped at the window whether or not the server honors
+    the range. A source that answers 200 and starts sending 20 GB is
+    hung up on after the window, so the promise in this module's first
+    paragraph holds against servers that ignore Range as well."""
     last = None
     while window <= cap:
         response = _get(url, 0, window - 1)
         with response:
-            body = response.read()
-            total = _total_size(response, len(body))
+            body = response.read(window)
+            total = _total_size(response)
         if not body:
             raise RemoteError("the source returned no bytes")
         if body[:4] != b"GGUF":
-            raise RemoteError("that is not a GGUF file (no magic at the "
-                              "start)")
+            raise RemoteError("that url does not serve a GGUF file (the "
+                              "first bytes are not the GGUF magic)")
         try:
             import io
             return reader(io.BytesIO(body)), total
@@ -103,22 +121,30 @@ def looks_remote(arg):
     return str(arg).startswith(("http://", "https://"))
 
 
-def hf_resolve(arg):
-    """A direct .gguf URL for a huggingface-shaped argument, or None.
+def model_url(arg):
+    """The url to read the header from, or None when the argument names
+    no url at all.
 
-    Accepts a full resolve/blob url, and the shorthand a model card
-    shows: repo owner, repo name and file."""
+    A hugging face page url is the one shape that needs translating:
+    the address in the browser bar says /blob/, which serves the html
+    page around the file, and /resolve/ serves the file itself. Every
+    other url is taken at its word rather than screened by its file
+    extension. A link that carries the name in a query string is still
+    a gguf, a .gguf that answers with an html error page is not, and
+    the first four bytes settle both cases, which reading the spelling
+    cannot. Also accepts the shorthand a model card shows: repo owner,
+    repo name and file."""
     if looks_remote(arg):
         parts = urllib.parse.urlsplit(arg)
-        if parts.netloc not in HF_HOSTS:
-            return arg if arg.lower().endswith(".gguf") else None
+        if parts.netloc.lower() not in HF_HOSTS:
+            return arg
         path = parts.path.replace("/blob/", "/resolve/")
         return urllib.parse.urlunsplit(
             (parts.scheme, parts.netloc, path, parts.query, ""))
     match = re.match(r"^([\w.-]+)/([\w.-]+)/([\w.@+-]+\.gguf)$", str(arg))
     if match:
-        return "https://huggingface.co/{}/{}/resolve/main/{}".format(*
-                                                                    match.groups())
+        return "https://huggingface.co/{}/{}/resolve/main/{}".format(
+            *match.groups())
     return None
 
 

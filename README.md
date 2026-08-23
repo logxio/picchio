@@ -50,13 +50,22 @@ file and uses only the standard library.
 | I want to… | Run |
 |---|---|
 | catch CPU fallback and measure the run | `./picchio MODEL` |
-| see how many layers fit on this GPU at my context and KV type | `./picchio plan MODEL --ctx 262144 --kv q8_0` |
+| know whether a model fits here before I download it | `./picchio plan https://huggingface.co/.../model-Q4_K_M.gguf` · `./picchio plan qwen3.5:9b` |
+| check that fit at my own context and KV type | `./picchio plan MODEL --ctx 262144 --kv q8_0` |
 | guard something already running and get told the moment it leaves the GPU: your own command, a loaded model, a server | `./picchio guard -- COMMAND` · `./picchio guard ollama` · `./picchio guard http://127.0.0.1:8080` |
 | compare two runs and show the first changed setting | `./picchio compare before.txt after.txt` |
 | turn one run into a complete Ollama or llama.cpp Issue report | `./picchio MODEL --share bug-report` |
 
 Add `--json` when you want machine-readable output.
 Add `--ctx 262144` when the problem only appears at a larger context.
+
+The fit check answers before the download, from the file header and the
+registry manifest, and it answers in one word and one move:
+
+```
+FITS. The whole model fits in this machine's memory.
+  5.3 GiB to download
+```
 
 ## What it gives you
 
@@ -91,7 +100,7 @@ in [examples/](examples/).
 - Ollama: CPU/GPU weight split and timing
 - macOS: Apple GPU activity, memory, power and energy per token
 - NVIDIA on Linux and Windows: GPU activity, memory, power and energy per token through NVML
-- AMD Linux: GPU activity and memory through amdgpu sysfs. **AMD readings are reference-only, and I want results from real Radeon hardware.**
+- AMD on Linux: GPU activity and memory through amdgpu sysfs
 
 Point Picchio at a GGUF path, an Ollama tag or a running llama-server URL.
 The result tells you where the model ran and which number is safe to compare.

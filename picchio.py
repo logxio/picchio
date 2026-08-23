@@ -660,6 +660,24 @@ def ollama_ps_entry(tag):
     return None
 
 
+def ollama_has_tag(tag):
+    """True when this machine has already pulled the tag.
+
+    Whether a tag is read from the daemon here or from the registry
+    turns on whether it is on this disk, not on whether it happens to
+    be loaded: /api/show answers for anything pulled, and it answers
+    with more than a manifest carries."""
+    want = ollama_tag(tag)
+    try:
+        for m in ollama_api("/api/tags", timeout=5).get("models", []):
+            if want and want in (ollama_tag(m.get("name")),
+                                 ollama_tag(m.get("model"))):
+                return True
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+    return False
+
+
 def ollama_host_is_local():
     """Runner logs only belong to this machine. Never inspect local logs
     for a remote OLLAMA_HOST and accidentally attribute their dtype to the
@@ -1847,7 +1865,7 @@ def diagnose(cold, rep, mode, tele=None):
         return "NO TIMING EVIDENCE", (
             "The engine says {}/{} layers on GPU and then printed no "
             "timings picchio could read: every rate above is unmeasured, "
-            "not zero, and no verdict here rests on a number. Rerun with "
+            "not zero, and nothing said here rests on a number. Rerun with "
             "--keep-logs and open an issue with the log.".format(n, total)
         )
     # a full offload claim from stderr, cross checked the same way the
@@ -2003,10 +2021,11 @@ def colorize(text, stream=None):
                               line, count=1)
         elif line.startswith("SUSPECT: "):
             line = BOLD + YELLOW + "SUSPECT" + RESET + line[7:]
-        elif line.startswith("  verdict"):
-            for word, col in (("not judged", None), ("fits", GREEN),
-                              ("tight", YELLOW), ("no", RED)):
-                if word in line:
+        elif re.match(r"^(FITS|TIGHT|PARTIAL|CPU|NO|UNKNOWN)\. ", line):
+            for word, col in (("FITS", GREEN), ("TIGHT", YELLOW),
+                              ("PARTIAL", YELLOW), ("CPU", RED),
+                              ("NO", RED), ("UNKNOWN", None)):
+                if line.startswith(word + ". "):
                     if col:
                         line = line.replace(
                             word, BOLD + col + word + RESET, 1)
@@ -2720,12 +2739,12 @@ def render_compare(names, a, b):
 def compare_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
         print("usage: picchio compare A.txt B.txt\n"
-              "each file holds one pasted verdict block (surrounding "
+              "each file holds one pasted result block (surrounding "
               "forum text is fine)")
         sys.exit(0)
     if len(argv) != 2:
         sys.exit("picchio compare: usage: picchio compare A.txt B.txt\n"
-                 "each file holds one pasted verdict block (surrounding "
+                 "each file holds one pasted result block (surrounding "
                  "forum text is fine)")
     blocks = []
     for path in argv:
@@ -2735,7 +2754,7 @@ def compare_cli(argv):
         except OSError as e:
             sys.exit("picchio compare: {}".format(e))
         if blk is None:
-            sys.exit("picchio compare: no verdict block in {} (need at "
+            sys.exit("picchio compare: no result block in {} (need at "
                      "least the model line and a rates row)".format(path))
         blocks.append(blk)
     print(colorize(render_compare(argv, blocks[0], blocks[1])))
@@ -2882,7 +2901,7 @@ def render_verify(src, b, verdict, flags):
 def verify_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
         print("usage: picchio verify [FILE]\n"
-              "re-derive the physics a pasted verdict block claims, and\n"
+              "re-derive the physics a pasted result block claims, and\n"
               "flag it when placement, the prefill/decode signature, the\n"
               "os meter and the headline do not describe the same run.\n"
               "reads the block from FILE, or from stdin when none is given.")
@@ -2898,7 +2917,7 @@ def verify_cli(argv):
         src = "pasted block"
     b = parse_block(text)
     if b is None:
-        sys.stderr.write("picchio verify: no verdict block found in {} (need "
+        sys.stderr.write("picchio verify: no result block found in {} (need "
                          "the model line and a rates row).\n".format(src))
         sys.exit(2)
     verdict, flags = verify_block(b)
@@ -4315,7 +4334,7 @@ def plan_budget(mach):
                 "label": "metal working set, 0.78 of {} GB ram".format(
                     mach["ram_gb"])}
     return {"bytes": ram, "kind": "ram",
-            "label": "system ram only, gpu memory not judged"}
+            "label": "system ram only, no gpu meter on this machine"}
 
 
 def plan_layers(file_bytes, kv, meta, wall):
@@ -4341,13 +4360,17 @@ def plan_layers(file_bytes, kv, meta, wall):
     return max(0, min(total, int(room // per_layer))), total
 
 
+PLAN_FIT_BAND = 0.95
+# Where fits stops on a shared memory pool. The 35B MoE measured
+# HEALTHY fully offloaded at 85% of this budget (22.1 GB of weights on
+# the 32 GB machine), so fits runs to here; past 1.05 even an idle
+# machine has no room left to find.
+
+
 def plan_state(need, budget):
-    """fits / tight / no. The 35B MoE measured HEALTHY fully offloaded
-    at 85% of this budget (22.1 GB of weights on the 32 GB machine),
-    so fits runs to 0.95; past 1.05 even an idle machine has no room
-    left to find."""
+    """fits / tight / no."""
     r = need / budget
-    if r <= 0.95:
+    if r <= PLAN_FIT_BAND:
         return "fits"
     if r <= 1.05:
         return "tight"
@@ -4436,21 +4459,29 @@ def plan_remote(arg):
     url or a registry tag is read the only way that keeps that promise:
     the manifest for the size, a ranged read of the header for the
     geometry, and not one byte of the weights."""
-    url = remote.hf_resolve(arg)
+    url = remote.model_url(arg)
     if url:
-        say = "reading the header from {} (the weights are not " \
-              "downloaded)".format(urllib.parse.urlsplit(url).netloc)
-        sys.stderr.write("picchio plan: {}\n".format(say))
+        sys.stderr.write("picchio plan: reading the header from {}, not "
+                         "the weights\n".format(
+                             urllib.parse.urlsplit(url).netloc))
         meta, total = remote.head_bytes(url, gguf_meta_stream)
         return (os.path.basename(urllib.parse.urlsplit(url).path) or arg,
-                total, meta, None, "over the network, header only")
+                total, meta, None, "read over the network, header only")
     if not remote.ollama_ref(arg):
         return None
-    sys.stderr.write("picchio plan: asking the ollama registry about {} "
-                     "(the weights are not downloaded)\n".format(arg))
+    sys.stderr.write("picchio plan: asking the ollama registry about {}, "
+                     "not downloading it\n".format(arg))
     digest, size = remote.ollama_manifest(arg)
-    meta, total = remote.head_bytes(
-        remote.ollama_blob_url(arg, digest), gguf_meta_stream)
+    try:
+        meta, total = remote.head_bytes(
+            remote.ollama_blob_url(arg, digest), gguf_meta_stream)
+    except remote.RemoteError as exc:
+        # the manifest already paid for the size, so it is kept and said
+        # out loud rather than thrown away with the geometry. What the
+        # size alone can answer, plan_row answers; what it cannot, it
+        # refuses, and this note is the reason it gives
+        return (arg, size, None, str(exc),
+                "ollama registry, manifest only")
     return (arg, total or size, meta, None,
             "ollama registry, manifest and header only")
 
@@ -4496,17 +4527,17 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX, kv="f16"):
     larger than the card still runs, with the layers that did not fit
     on the cpu, so the answer there is how many of them land where."""
     if file_bytes is None:
-        return {"name": name, "need": None, "state": "not judged",
+        return {"name": name, "need": None, "state": "unknown",
                 "est": None, "moe": False, "layers": None,
                 "note": note or "no size available"}
     kv_bytes, kv_note = kv_account(meta, ctx, kv) if meta \
-        else (None, note or "?")
+        else (None, note or "the header could not be read")
     kv = kv_bytes
     need = file_bytes + (kv or 0) + PLAN_COMPUTE
     moe = plan_is_moe(meta) if meta else False
     budget = wall.get("bytes")
     layers = plan_layers(file_bytes, kv, meta, wall)
-    state = plan_state(need, budget) if budget else "not judged"
+    state = plan_state(need, budget) if budget else "unknown"
     if wall.get("kind") == "gpu":
         # on a card the layer split is the answer, and the only one:
         # the fits/tight/no bands are the system-ram heuristic, and
@@ -4520,6 +4551,14 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX, kv="f16"):
             state = "partial"
         else:
             state = "cpu"
+    if kv is None:
+        # the cache is the one term that grows with the context, so a
+        # model whose geometry will not read cannot be judged: adding
+        # zero for it answers the long context question with the short
+        # context number and calls it fits. The size the source already
+        # paid for is kept and shown as the floor it is; only the
+        # answer is withheld
+        state = "unknown"
     return {"name": name, "need": need, "state": state, "moe": moe,
             "est": plan_est_decode(bw, file_bytes, moe),
             "kv": kv, "kv_note": kv_note, "file": file_bytes,
@@ -4527,12 +4566,131 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX, kv="f16"):
             "note": None if meta else (note or "header unreadable")}
 
 
-def render_plan_one(row, wall, bw, speed_note, source=None):
-    out = ["picchio plan: " + row["name"]]
-    if source:
-        out.append("  read      {:>10}   {}".format("header", source))
+PLAN_WORDS = {"fits": "FITS", "tight": "TIGHT", "partial": "PARTIAL",
+              "cpu": "CPU", "no": "NO", "unknown": "UNKNOWN"}
+# The whole command exists to print one of these. They are the words
+# somebody says to a friend about a download, which is the register the
+# question is asked in; layers, cache bytes and calibration are the
+# receipt underneath, for whoever wants to see the working.
+
+
+def plan_headroom(row, wall):
+    """The largest weights file that would still fit whole here, or
+    None when that cannot be said.
+
+    The wall arithmetic read backwards. Every layer of a model pays its
+    weights and its share of the cache, the graph buffer is paid once,
+    and the budget is the wall, so the file size at which the last
+    layer stops fitting is the budget less those two. The cache is a
+    property of the shape rather than of the quantizer, so a lighter
+    build of the same model carries the same one: this is the number to
+    hold against the file list on the page the download came from."""
+    budget = wall.get("bytes")
+    if not budget or row.get("kv") is None:
+        return None
+    if wall.get("kind") != "gpu":
+        budget = int(budget * PLAN_FIT_BAND)
+    room = budget - row["kv"] - PLAN_COMPUTE
+    return room if room > 0 else None
+
+
+def plan_command(target, source):
+    """The command that acts on this answer, or None when the next move
+    is not one command long."""
+    if not target:
+        return None
+    if source and source.startswith("read over the network"):
+        return None                      # the link is already in hand
+    if os.path.isfile(target):
+        return "{} {}".format(invocation(), shlex.quote(target))
+    if remote.ollama_ref(target):
+        return "ollama run {}".format(target)
+    return None
+
+
+def plan_answer(row, wall, target=None, source=None):
+    """(word, what it means, what to do). The first two lines of the
+    output, and the only two most people need.
+
+    The state machine is the one plan_row already ran; this says it in
+    the words the question was asked in. Nothing is decided here."""
+    word = PLAN_WORDS.get(row.get("state"), "UNKNOWN")
+    on_a_card = wall.get("kind") == "gpu"
+    room = plan_headroom(row, wall)
+    command = plan_command(target, source)
+    # what to shrink is not always the file. Once the cache and the
+    # graph buffer fill the wall on their own, every build of the model
+    # misses by the same amount and the context is the thing to move
+    smaller = ("pick a lighter build: under {:.1f} GiB fits whole".format(
+        int(room / 1024.0 ** 3 * 10) / 10.0) if room else
+        "the cache and working room already fill the memory at this "
+        "context")
+
+    if word == "UNKNOWN":
+        if row.get("need") is None:
+            why = "nothing here gives its size, so there is nothing to weigh"
+        elif not wall.get("bytes"):
+            why = wall.get("label") or "this machine's memory is unreadable"
+        else:
+            why = "{}, so the memory it needs cannot be counted".format(
+                row.get("kv_note") or row.get("note")
+                or "the header did not come through")
+        return word, "Not enough came back to answer that.", why
+
+    if word == "FITS":
+        means = ("The whole model runs on your GPU." if on_a_card
+                 else "The whole model fits in this machine's memory.")
+        if source and source.startswith("read over the network"):
+            return word, means, "{} to download".format(_gib(row["file"]))
+        return word, means, command or "run it and measure it"
+
+    if word == "TIGHT":
+        return (word, "It fits, with almost nothing to spare.",
+                "close whatever else holds memory before you load it")
+
+    if word == "PARTIAL":
+        if row.get("layers") and row["layers"][1]:
+            fit, total = row["layers"]
+            means = ("{}% of it fits on your GPU, the rest falls to the "
+                     "CPU.".format(int(round(100.0 * fit / total))))
+        else:
+            means = "Too big for your GPU. Part of it falls to the CPU."
+        return word, means, smaller
+
+    if word == "CPU":
+        # cpu is only ever reached on a card, and there the card is
+        # holding something: how much, and getting it back, is the move
+        return (word, "None of it fits on your GPU right now.",
+                "{} of the {} card is in use; free it and ask again".format(
+                    _gib(wall["total"] - wall["free"]),
+                    _gib(wall["total"])))
+
+    return word, "Too big for this machine's memory.", smaller
+
+
+def render_plan_one(row, wall, bw, speed_note, source=None, target=None):
+    """The answer, then the receipt for it.
+
+    The order is the point. Someone asking whether a 20 GB download is
+    worth starting gets the answer and the next move in two lines; the
+    arithmetic that produced them, and where every number in it came
+    from, sits below for whoever wants to check the working."""
+    word, means, action = plan_answer(row, wall, target, source)
+    out = ["{}. {}".format(word, means)]
+    if action:
+        # a command has to survive being copied, and a long model path
+        # wrapped over four lines does not. Anything carrying a token
+        # too wide to fit stays on one line and lets the terminal soft
+        # wrap it; prose wraps as prose
+        if max([len(w) for w in action.split()] or [0]) > WIDTH - 2:
+            out.append("  " + action)
+        else:
+            out += textwrap.wrap(action, width=WIDTH, initial_indent="  ",
+                                 subsequent_indent="  ")
+    out.append("")
+    out.append("  " + row["name"])
+    out.append("  " + (source or "read from this disk"))
     if row["need"] is None:
-        out.append("  " + row["note"])
         return "\n".join(out)
     out.append("  weights   {:>10}   the file itself".format(
         _gib(row["file"])))
@@ -4540,11 +4698,12 @@ def render_plan_one(row, wall, bw, speed_note, source=None):
         out.append("  kv cache  {:>10}   {}".format(_gib(row["kv"]),
                                                     row["kv_note"]))
     else:
-        out.append("  kv cache  {:>10}   not counted: {}".format(
-            "?", row.get("kv_note") or row.get("note") or "?"))
+        out.append("  kv cache  {:>10}   not counted".format("?"))
     out.append("  compute   {:>10}   graph buffer, measured constant"
                .format(_gib(PLAN_COMPUTE)))
-    out.append("  need      {:>10}".format(_gib(row["need"])))
+    out.append("  need      {:>10}{}".format(
+        _gib(row["need"]), "   floor only, the cache is missing from it"
+        if row["kv"] is None else ""))
     budget = wall.get("bytes")
     if wall.get("kind") == "gpu":
         out.append("  gpu total {:>10}   {}".format(
@@ -4552,28 +4711,17 @@ def render_plan_one(row, wall, bw, speed_note, source=None):
         out.append("  gpu free  {:>10}   right now; {} is already in "
                    "use".format(_gib(wall["free"]),
                                 _gib(wall["total"] - wall["free"])))
-        out.append("  budget    {:>10}   the engine leaves {} of the card "
+        out.append("  budget    {:>10}   the engine keeps {} of it "
                    "spare".format(_gib(budget), _gib(wall["spare"])))
     elif budget:
         out.append("  budget    {:>10}   {}".format(_gib(budget),
                                                     wall["label"]))
-    if wall.get("kind") != "gpu" and not budget:
-        out.append("  verdict   not judged   " + wall["label"])
-    elif row["layers"] and row["layers"][0] == 0:
-        out.append("  verdict   {:>10}   no room on the card right now; "
-                   "every layer would run on the cpu".format(row["state"]))
-    elif row["layers"] and row["state"] in ("partial", "cpu"):
+    if row.get("layers"):
         fit, total = row["layers"]
-        out.append("  verdict   {:>10}   about {} of {} layers on the gpu, "
-                   "the rest on the cpu".format(row["state"], fit, total))
-    elif row["state"] == "partial":
-        out.append("  verdict   {:>10}   too big for the card; the layers "
-                   "that miss run on the cpu".format(row["state"]))
-    else:
-        out.append("  verdict   {:>10}   {:.0f}% of budget".format(
-            row["state"], 100.0 * row["need"] / budget))
-    if row["note"]:
-        out.append("  note: " + row["note"])
+        out.append("  layers    {:>10}   on the gpu{}".format(
+            "{} of {}".format(fit, total),
+            ", the other {} on the cpu".format(total - fit)
+            if total > fit else ""))
     if row["moe"]:
         out.append("  speed: no estimate for a mixture of experts; each")
         out.append("  token reads only the active experts, so file size")
@@ -4602,7 +4750,7 @@ def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX, kv="f16"):
     elif budget:
         out.append("budget {} ({})".format(_gib(budget), wall["label"]))
     else:
-        out.append("budget not judged: " + wall["label"])
+        out.append("budget unknown: " + wall["label"])
     out.append("kv counted at ctx {}, {}".format(ctx, kv))
     out.append("")
     calibrated = bw is not None
@@ -4612,11 +4760,9 @@ def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX, kv="f16"):
     out.append(head.rstrip())
     for r in rows:
         name = r["name"] if len(r["name"]) <= 30 else r["name"][:28] + ".."
-        fit = r["state"]
-        if r.get("layers") and fit not in ("fits", "not judged"):
-            fit = "{}/{}".format(r["layers"][0], r["layers"][1])
         line = "  {:<30}{:>9}   {:<7}".format(
-            name, _gib(r["need"]) if r["need"] else "?", fit)
+            name, _gib(r["need"]) if r["need"] else "?",
+            PLAN_WORDS.get(r["state"], "UNKNOWN"))
         if calibrated:
             if r["est"] is not None:
                 line += "  ~{:.1f} tok/s".format(r["est"])
@@ -4640,15 +4786,17 @@ def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX, kv="f16"):
 def plan_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
         print("usage: picchio plan [MODEL] [--ctx N] [--kv TYPE]\n"
-              "the capacity account before you download or load: how much\n"
-              "of it lands on the gpu (gguf header geometry against this\n"
-              "machine's free video memory), and, once one real diagnosis\n"
-              "has been run here, an estimated decode rate. --ctx sets the\n"
-              "context the kv cache is counted at; a long context is often\n"
-              "what pushes a model off the card. --kv prices the cache at\n"
-              "f16 (the default), bf16, f32, q8_0 or q4_0. With no MODEL,\n"
-              "it accounts every model found here. Estimates are labeled\n"
-              "and never appear in a verdict block.")
+              "one word for whether a model will run here, and what to\n"
+              "do about it. MODEL can be a .gguf path, an ollama tag or\n"
+              "a link to a .gguf. A link, or a tag this machine has not\n"
+              "pulled, is answered from the file header and the registry\n"
+              "manifest alone, so nothing downloads the weights to find\n"
+              "out. The numbers behind the answer sit under it.\n"
+              "--ctx sets the context the kv cache is counted at; a long\n"
+              "context is often what pushes a model off the card. --kv\n"
+              "prices the cache at f16 (the default), bf16, f32, q8_0 or\n"
+              "q4_0. With no MODEL, it accounts every model found here.\n"
+              "Speed figures are estimates and always labeled.")
         sys.exit(0)
     ctx, kv = CTX, "f16"
     argv = list(argv)
@@ -4680,7 +4828,7 @@ def plan_cli(argv):
         source = None
         local = os.path.isfile(argv[0]) or (
             remote.ollama_ref(argv[0]) and ollama_reachable()
-            and ollama_ps_entry(argv[0]) is not None)
+            and ollama_has_tag(argv[0]))
         if not local:
             try:
                 found = plan_remote(argv[0])
@@ -4691,7 +4839,8 @@ def plan_cli(argv):
         if source is None:
             name, fb, meta, note = plan_target(argv[0])
         row = plan_row(name, fb, meta, note, wall, bw, ctx, kv)
-        print(colorize(render_plan_one(row, wall, bw, speed_note, source)))
+        print(colorize(render_plan_one(row, wall, bw, speed_note, source,
+                                       argv[0])))
         sys.exit(0)
     sizes = {}
     if ollama_reachable():
@@ -4712,7 +4861,7 @@ def plan_cli(argv):
             rows.append(plan_row(n, fb, meta, why, wall, bw, ctx, kv))
         else:
             rows.append({"name": label, "need": None, "est": None,
-                         "moe": False, "state": "not judged",
+                         "moe": False, "state": "unknown",
                          "note": note})
     if not rows:
         sys.exit("picchio plan: no models found on this machine; give "
@@ -5084,7 +5233,7 @@ def id_cli(argv):
               "only from a run measured here), and how many experts\n"
               "wake per token on a mixture of experts. A .gguf path is\n"
               "walked directly, an ollama tag through the api's mirror\n"
-              "of the same table. Read only, never a verdict.")
+              "of the same table. Read only, it never calls the run.")
         sys.exit(0)
     if len(argv) != 1:
         sys.exit("picchio id: usage: picchio id MODEL (a .gguf path "
@@ -5286,7 +5435,7 @@ def share_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
         print("usage: picchio share [BLOCK] [--model MODEL]\n"
               "              [--line | --row | --post | --bug-report]\n"
-              "reformat a verdict block you already have into something\n"
+              "reformat a result block you already have into something\n"
               "postable. --line is one line for a comment, --row is a\n"
               "markdown table row, --post is a full post skeleton and\n"
               "--bug-report is a GitHub-ready runtime report. BLOCK is\n"
@@ -6187,7 +6336,7 @@ def selftest():
     # and the kv formula must land on the engine's own committed
     # allocation figures; the speed gate refuses everything but a
     # cached dense measurement
-    pl_ok, pl_all = 0, 9
+    pl_ok, pl_all = 0, 12
 
     def synth_gguf(arch, kvs):
         out = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", 0),
@@ -6313,6 +6462,198 @@ def selftest():
             and plan_layers(16464440224, 205 * mib, big,
                             {"bytes": 64 * gib, "kind": "ram"}) is None:
         pl_ok += 1
+    # 8: a header that will not read is a hole in the answer, not a
+    #    smaller answer. The size the source already paid for is kept,
+    #    and the answer is the one thing withheld: adding zero for the
+    #    cache would answer the 262144 question with the 4096 number
+    hole = plan_row("t", 5680522464, None, "no header came back",
+                    card, None)
+    if hole["state"] == "unknown" and hole["file"] == 5680522464 \
+            and hole["kv"] is None and hole["need"] \
+            and plan_row("t", 5680522464, m9, None, card,
+                         None, 4096, "q5_1")["state"] == "unknown":
+        pl_ok += 1
+    # 9: the words the command exists to print, against the wall the
+    #    engine itself calibrated: the 27B is PARTIAL, the 9B is FITS,
+    #    and a card with no room left is CPU, the one case where the
+    #    thing to do is free the card rather than shrink the file. The
+    #    command it hands back also has to survive being copied, so a
+    #    tag wider than the block is left on one line
+    m27 = gguf_meta_stream(synth_gguf("q27", {
+        "block_count": 65, "attention.head_count": 40,
+        "attention.head_count_kv": 8, "attention.key_length": 128,
+        "attention.value_length": 128}))
+    v_big = plan_answer(plan_row("b", 16464440224, m27, None, card, None),
+                        card)
+    v_small = plan_answer(plan_row("s", 5680522464, m9, None, card,
+                                   None), card, "qwen3.5:9b")
+    full = dict(card, bytes=0, free=1024 * mib)
+    v_full = plan_answer(plan_row("b", 16464440224, m27, None, full, None),
+                         full)
+    long_tag = "vendor/" + "n" * 120
+    wide = render_plan_one(plan_row("s", 5680522464, m9, None, card, None),
+                           card, None, "note", None, long_tag)
+    if v_big[0] == "PARTIAL" and "fits on your GPU" in v_big[1] \
+            and v_small[0] == "FITS" \
+            and v_small[2] == "ollama run qwen3.5:9b" \
+            and v_full[0] == "CPU" and "in use" in v_full[2] \
+            and plan_answer(hole, card)[0] == "UNKNOWN" \
+            and len([ln for ln in wide.splitlines()
+                     if long_tag in ln]) == 1:
+        pl_ok += 1
+    # 10: the ceiling the answer offers is a promise, so it is pinned to
+    #     the wall's own flip point rather than to a second formula: a
+    #     file of exactly that size keeps every layer, one mib more does
+    #     not, and the printed figure never rounds up past it. When the
+    #     cache alone fills the wall no build is small enough, and the
+    #     thing to move is the context, which the action has to say
+    ceiling = plan_headroom(plan_row("s", 5680522464, m9, None, card, None),
+                            card)
+    at = plan_row("at", ceiling, m9, None, card, None)
+    over = plan_row("over", ceiling + mib, m9, None, card, None)
+    starved = plan_row("s", 5680522464, m9, None, card, None, 400000)
+    if ceiling == (10919 - 1024 - 128 - 512) * mib \
+            and at["state"] == "fits" and over["state"] == "partial" \
+            and float(re.search(r"under ([\d.]+) GiB",
+                                plan_answer(over, card)[2]).group(1)) \
+            <= ceiling / 1024.0 ** 3 \
+            and plan_headroom(starved, card) is None \
+            and "context" in plan_answer(starved, card)[2] \
+            and "lighter build" not in plan_answer(starved, card)[2]:
+        pl_ok += 1
+
+    # remote: reading a model that is not on this disk. The network is
+    # stubbed at the one function that reaches it, so what runs here is
+    # the window growth, the size accounting, the magic check and the
+    # cap, on every platform and without a socket.
+    rm_ok, rm_all = 0, 8
+
+    class FakeReply:
+        def __init__(self, body, status, headers):
+            self._body, self.status, self.headers = body, status, headers
+            self.taken = 0
+
+        def read(self, n=None):
+            data = self._body if n is None else self._body[:n]
+            self.taken += len(data)
+            return data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def serve(body, honors_range=True, log=None):
+        def fake_get(url, start=None, end=None, timeout=30):
+            if log is not None:
+                log.append((url, start, end))
+            if start is None or not honors_range:
+                return FakeReply(body, 200,
+                                 {"Content-Length": str(len(body))})
+            cut = body[start:end + 1]
+            return FakeReply(cut, 206, {
+                "Content-Range": "bytes {}-{}/{}".format(
+                    start, start + max(0, len(cut) - 1), len(body)),
+                "Content-Length": str(len(cut))})
+        return fake_get
+
+    # a real gguf image with a real header, followed by weights that
+    # must never be fetched: the whole point of the command
+    head_img = synth_gguf("qwen35", {
+        "block_count": 32, "attention.head_count": 16,
+        "attention.head_count_kv": 4, "attention.key_length": 256,
+        "attention.value_length": 256}).getvalue()
+    file_img = head_img + b"\0" * (8 * 1024 * 1024)
+    real_get = remote._get
+    try:
+        # 1: the header parses out of the prefix, and the size reported
+        #    is the whole file's, not the slice that was fetched
+        calls = []
+        remote._get = serve(file_img, log=calls)
+        meta_r, total_r = remote.head_bytes("https://h/m.gguf",
+                                            gguf_meta_stream, window=65536)
+        if total_r == len(file_img) and meta_r["qwen35.block_count"] == 32 \
+                and calls == [("https://h/m.gguf", 0, 65535)]:
+            rm_ok += 1
+        # 2: a header longer than the first window grows the window
+        #    instead of betting on one size, and each try is a fresh get
+        calls = []
+        remote._get = serve(file_img, log=calls)
+        meta_r, _t = remote.head_bytes("https://h/m.gguf", gguf_meta_stream,
+                                       window=64, cap=1 << 20)
+        if meta_r["qwen35.block_count"] == 32 and len(calls) > 1 \
+                and [c[2] for c in calls[:3]] == [63, 127, 255]:
+            rm_ok += 1
+        # 3: a server that ignores the range is hung up on at the
+        #    window. Without this a 20 GB file arrives in full through
+        #    a command whose entire promise is that it will not
+        big_img = head_img + b"\0" * (40 * 1024 * 1024)
+        pulled = []
+
+        def counting_get(url, start=None, end=None, timeout=30):
+            reply = FakeReply(big_img, 200,
+                              {"Content-Length": str(len(big_img))})
+            pulled.append(reply)
+            return reply
+        remote._get = counting_get
+        meta_r, total_r = remote.head_bytes("https://h/m.gguf",
+                                            gguf_meta_stream, window=65536)
+        if total_r == len(big_img) and meta_r["qwen35.block_count"] == 32 \
+                and all(r.taken <= 65536 for r in pulled):
+            rm_ok += 1
+        # 4: a url that answers with something else says so, rather
+        #    than handing the parser an html error page
+        remote._get = serve(b"<!doctype html><title>404</title>" * 40)
+        try:
+            remote.head_bytes("https://h/m.gguf", gguf_meta_stream)
+        except remote.RemoteError as exc:
+            if "GGUF" in str(exc):
+                rm_ok += 1
+        # 5: a header that never finishes inside the cap is reported,
+        #    not chased to the end of the file
+        remote._get = serve(b"GGUF" + b"\xff" * (4 * 1024 * 1024))
+        try:
+            remote.head_bytes("https://h/m.gguf", gguf_meta_stream,
+                              window=1024, cap=8192)
+        except remote.RemoteError as exc:
+            if "did not parse within" in str(exc):
+                rm_ok += 1
+        # 6: the registry manifest names the weights layer and its size
+        #    among the other layers, and that size needs no blob at all
+        manifest = json.dumps({"layers": [
+            {"mediaType": "application/vnd.ollama.image.license",
+             "digest": "sha256:aa", "size": 11},
+            {"mediaType": "application/vnd.ollama.image.model",
+             "digest": "sha256:bb", "size": 5680522464}]}).encode()
+        remote._get = serve(manifest)
+        if remote.ollama_manifest("qwen3.5:9b") == ("sha256:bb",
+                                                    5680522464):
+            rm_ok += 1
+    finally:
+        remote._get = real_get
+    # 7: what an argument names. The address in a browser bar serves the
+    #    page around the file and /resolve/ serves the file; every other
+    #    url is taken at its word, because a name in a query string is
+    #    still a gguf and only the first bytes can say otherwise
+    if remote.model_url(
+        "https://huggingface.co/u/r/blob/main/m.gguf"
+    ) == "https://huggingface.co/u/r/resolve/main/m.gguf" \
+            and remote.model_url("https://cdn.example/d?file=m.gguf") \
+            == "https://cdn.example/d?file=m.gguf" \
+            and remote.model_url("unsloth/Qwen3.5-9B-GGUF/m.gguf") \
+            == "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/" \
+               "resolve/main/m.gguf" \
+            and remote.model_url("qwen3.5:9b") is None:
+        rm_ok += 1
+    # 8: and what counts as a registry tag, including the library
+    #    namespace ollama leaves off and the version it implies
+    if remote.ollama_ref("qwen3.5:9b") == ("library/qwen3.5", "9b") \
+            and remote.ollama_ref("hf.co/u") == ("hf.co/u", "latest") \
+            and remote.ollama_ref("https://h/m.gguf") is None \
+            and remote.ollama_ref("m.gguf") is None:
+        rm_ok += 1
+
     # id: a synthetic gguf with a real tensor table replays through the
     # same walk, account and expert arithmetic used live (the big real
     # files stay out of ci; they are the manual acceptance step). The
@@ -6944,7 +7285,8 @@ def selftest():
           "sweep {}/{}, server {}/{}, linux {}/{}, silent-engine {}/{}, "
           "locale {}/{}, timing-gate {}/{}, amdgpu {}/{}, "
           "residency {}/{}, curves {}/{}, "
-          "plan {}/{}, id {}/{}, settings {}/{}, energy {}/{}, "
+          "plan {}/{}, remote {}/{}, id {}/{}, settings {}/{}, "
+          "energy {}/{}, "
           "share {}/{}, vet {}/{}, cache {}/{}, argv {}/{}, "
           "version {}/{}, "
           "onboarding {}/{}, queue/parity {}/{}".format(
@@ -6953,7 +7295,8 @@ def selftest():
               sv_ok, sv_all, lx_ok, lx_all, se_ok, se_all,
               lc_ok, lc_all, tg_ok, tg_all, am_ok, am_all,
               rs_ok, rs_all, rc_ok, rc_all,
-              pl_ok, pl_all, id_ok, id_all, st_ok, st_all, en_ok, en_all,
+              pl_ok, pl_all, rm_ok, rm_all, id_ok, id_all,
+              st_ok, st_all, en_ok, en_all,
               sh_ok, sh_all, vt_ok, vt_all, ch_ok, ch_all,
               av_ok, av_all, vp_ok, vp_all,
               gd_ok, gd_all, core_ok, core_all))
@@ -6966,7 +7309,8 @@ def selftest():
              and lx_ok == lx_all and se_ok == se_all
              and lc_ok == lc_all and tg_ok == tg_all and am_ok == am_all
              and rs_ok == rs_all and rc_ok == rc_all
-             and pl_ok == pl_all and id_ok == id_all and av_ok == av_all
+             and pl_ok == pl_all and rm_ok == rm_all
+             and id_ok == id_all and av_ok == av_all
              and st_ok == st_all and en_ok == en_all
              and sh_ok == sh_all and vt_ok == vt_all
              and ch_ok == ch_all
@@ -7132,8 +7476,8 @@ def main():
     ap.add_argument("--explain", type=float, metavar="TOKS",
                     help=argparse.SUPPRESS)
     ap.add_argument("--json", action="store_true",
-                    help="write only JSON to stdout; human verdict goes to "
-                         "stderr")
+                    help="write only JSON to stdout; the readable "
+                         "result goes to stderr")
     ap.add_argument("--share",
                     choices=("line", "row", "post", "bug-report"),
                     help="after measuring, write a postable line, Markdown "
@@ -7162,7 +7506,8 @@ def main():
     if args.json and args.share:
         sys.exit("picchio: --json and --share both own stdout; choose one.")
     if args.ctx_sweep is not None and args.share:
-        sys.exit("picchio: --share formats an mp1 verdict, while --ctx-sweep "
+        sys.exit("picchio: --share formats one result block, while "
+                 "--ctx-sweep "
                  "prints a multi-context table; choose one.")
     if args.ctx_sweep is not None and args.ctx != CTX:
         sys.exit("picchio: --ctx and --ctx-sweep both set context; choose "

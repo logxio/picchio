@@ -4089,6 +4089,11 @@ GGUF_TYPES = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
               6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
 
 
+ARRAY_KEEP = 1024
+# Above this an array is a vocabulary, not geometry: it is read past and
+# dropped. Below it the values are per-layer numbers the account needs.
+
+
 def gguf_meta_stream(f):
     """The GGUF v2/v3 header key value table, scalars and strings only
     (arrays are read past and dropped): magic, version, tensor count,
@@ -4122,11 +4127,22 @@ def gguf_meta_stream(f):
             if it == 8:
                 for _ in range(cnt):
                     rstr()
-            elif it == 9:
+                return None  # a vocabulary, megabytes of it, and no
+                # arithmetic downstream reads a token string
+            if it == 9:
                 raise ValueError("nested gguf array")
-            else:
-                f.seek(struct.calcsize(GGUF_TYPES[it]) * cnt, 1)
-            return None  # array values feed nothing in the account
+            fmt = GGUF_TYPES[it]
+            width = struct.calcsize(fmt)
+            if cnt > ARRAY_KEEP:
+                f.seek(width * cnt, 1)
+                return None
+            # short numeric arrays are geometry, not vocabulary: a
+            # converted qwen3.5 writes attention.head_count_kv as one
+            # value per layer, and dropping it silently fell back to
+            # the query head count, pricing the kv cache at 512 MiB
+            # where the engine allocates 128
+            raw = f.read(width * cnt)
+            return list(struct.unpack("<{}{}".format(cnt, fmt[-1]), raw))
         fmt = GGUF_TYPES[t]
         return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
 
@@ -4165,6 +4181,16 @@ KV_BYTES = {"f16": 2.0, "bf16": 2.0, "f32": 4.0,
 # at a long context.
 
 
+def _one_or_max(value):
+    """One number from a header field that some converters write per
+    layer. The cache is sized by the widest layer, so the maximum is
+    the honest single figure; a scalar passes straight through."""
+    if isinstance(value, (list, tuple)):
+        nums = [v for v in value if isinstance(v, (int, float))]
+        return max(nums) if nums else None
+    return value
+
+
 def kv_account(meta, ctx=CTX, kv="f16"):
     """(kv bytes at ctx, note). Formula: ctx x attention layers x kv
     heads x (key length + value length) x 2 bytes of f16. Hybrid
@@ -4180,8 +4206,9 @@ def kv_account(meta, ctx=CTX, kv="f16"):
     if not meta.get("general.architecture"):
         return None, "header lacks general.architecture"
     blocks = _arch_get(meta, "block_count")
-    heads = _arch_get(meta, "attention.head_count")
-    heads_kv = _arch_get(meta, "attention.head_count_kv") or heads
+    heads = _one_or_max(_arch_get(meta, "attention.head_count"))
+    heads_kv = _one_or_max(
+        _arch_get(meta, "attention.head_count_kv")) or heads
     klen = _arch_get(meta, "attention.key_length")
     vlen = _arch_get(meta, "attention.value_length")
     if (not klen or not vlen) and _arch_get(meta, "embedding_length") \
@@ -6129,7 +6156,7 @@ def selftest():
     # and the kv formula must land on the engine's own committed
     # allocation figures; the speed gate refuses everything but a
     # cached dense measurement
-    pl_ok, pl_all = 0, 8
+    pl_ok, pl_all = 0, 9
 
     def synth_gguf(arch, kvs):
         out = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", 0),
@@ -6165,7 +6192,18 @@ def selftest():
     #    matching the engine's allocation for the local 35B
     if kv35 == 80 * 1024 ** 2 and plan_is_moe(m35) and not plan_is_moe(m9):
         pl_ok += 1
-    # 3: the quantized cache is priced off the engine's own allocations,
+    # 3: some converters write attention.head_count_kv once per layer.
+    #    Dropping the array fell back to the query head count and priced
+    #    a 9B's cache at 512 MiB where the engine allocates 128; a
+    #    hybrid model's array is mostly zeros with the attending layers
+    #    carrying the count, so the widest layer is the honest figure.
+    m9a = dict(m9)
+    m9a["qwen35.attention.head_count_kv"] = [0, 0, 0, 4] * 8
+    if kv_account(m9a, 4096)[0] == 128 * 1024 ** 2 \
+            and _one_or_max([0, 0, 4]) == 4 and _one_or_max(7) == 7 \
+            and _one_or_max([]) is None:
+        pl_ok += 1
+    # 4: the quantized cache is priced off the engine's own allocations,
     #    not off the block format alone. Asked for the same 9B at ctx
     #    4096, a 4070 SUPER read 128.00 MiB at f16, 68.00 at q8_0 and
     #    36.00 at q4_0; the account has to land on each to the byte, and
@@ -6175,7 +6213,7 @@ def selftest():
             and kv_account(m9, 4096, "q5_1")[0] is None \
             and "kv q8_0" in kv_account(m9, 4096, "q8_0")[1]:
         pl_ok += 1
-    # 4: head_dim falls back to embedding over heads when the header
+    # 5: head_dim falls back to embedding over heads when the header
     #    has no key/value length (the classic dense layout)
     kvf, _n = kv_account(gguf_meta_stream(synth_gguf("llama", {
         "block_count": 32, "attention.head_count": 32,

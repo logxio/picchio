@@ -4237,6 +4237,28 @@ def plan_state(need, budget):
     return "no"
 
 
+def _speed_record(cache):
+    """The newest cached run that can price this machine, or None.
+
+    The cache keeps one record per model, so a machine that has since
+    diagnosed something too big for its card keeps the bandwidth it
+    earned from one that fit, instead of losing the estimate or, worse,
+    quoting a blend of card and cpu as if it were the card."""
+    if not isinstance(cache, dict):
+        return None
+    records = cache.get("measurements")
+    ordered = list(records.values()) if isinstance(records, dict) else []
+    ordered.append(cache)  # the last run, which may predate the index
+    for record in reversed(ordered):
+        if not isinstance(record, dict) or record.get("moe") \
+                or record.get("state") != "HEALTHY" \
+                or not record.get("model_bytes") \
+                or not (record.get("rates") or {}).get("decode"):
+            continue
+        return record
+    return None
+
+
 def plan_speed_source(cache):
     """(bytes/s bandwidth, provenance) or (None, refusal). The one
     legal source for a speed figure here is this machine's own last
@@ -4245,6 +4267,11 @@ def plan_speed_source(cache):
     number at all, and a mixture of experts cannot calibrate it: its
     decode reads only the active experts, so decode times file size
     overstates the bandwidth several fold."""
+    record = _speed_record(cache)
+    if record:
+        bw = record["rates"]["decode"] * record["model_bytes"]
+        return bw, "calibrated by {} at {:.1f} tok/s decode".format(
+            record.get("model_name", "?"), record["rates"]["decode"])
     if not cache or not cache.get("model_bytes") \
             or not (cache.get("rates") or {}).get("decode"):
         return None, ("speed: not calibrated, no measured run cached "
@@ -4267,9 +4294,9 @@ def plan_speed_source(cache):
                       "Diagnose a model that fits once for the "
                       "estimate.".format(cache.get("model_name", "?"),
                                          cache.get("state") or "no state"))
-    bw = cache["rates"]["decode"] * cache["model_bytes"]
-    return bw, "calibrated by {} at {:.1f} tok/s decode".format(
-        cache.get("model_name", "?"), cache["rates"]["decode"])
+    return None, ("speed: no cached run on this machine kept the whole "
+                  "model on the gpu, so none of them price it. Diagnose "
+                  "a model that fits once for the estimate.")
 
 
 def plan_est_decode(bw, file_bytes, moe):
@@ -6022,11 +6049,23 @@ def selftest():
     obw, _on = plan_speed_source({"model_bytes": 5 * gib, "moe": False,
                                   "model_name": "m",
                                   "rates": {"decode": 20.0}})
+    # a machine that has since diagnosed something too big for its card
+    # keeps the bandwidth it earned from the model that fit: the index
+    # is searched newest first, and the partial run on top is stepped over
+    kept, knote = plan_speed_source({
+        "model_bytes": 16 * gib, "moe": False, "model_name": "big",
+        "state": "PARTIAL OFFLOAD", "rates": {"decode": 5.0},
+        "measurements": {
+            "a": {"model_bytes": 5 * gib, "moe": False, "model_name": "fit",
+                  "state": "HEALTHY", "rates": {"decode": 20.0}},
+            "b": {"model_bytes": 16 * gib, "moe": False, "model_name": "big",
+                  "state": "PARTIAL OFFLOAD", "rates": {"decode": 5.0}}}})
     if bw == 100 * gib and plan_est_decode(bw, 10 * gib, False) == 10.0 \
             and plan_est_decode(bw, 10 * gib, True) is None \
             and mbw is None and "mixture of experts" in mnote \
             and pbw is None and "not this machine's bandwidth" in pnote \
-            and obw is None:
+            and obw is None \
+            and kept == 100 * gib and "fit" in knote:
         pl_ok += 1
     # 7: the layer split is pinned to what the engine itself decided on
     #    a real card. On the 4070 SUPER, llama.cpp saw 10919 MiB free,

@@ -655,6 +655,20 @@ def ollama_host_is_local():
     return host in ("127.0.0.1", "0.0.0.0", "localhost", "::1", "::")
 
 
+def ollama_store():
+    """Where this machine keeps ollama's model store.
+
+    OLLAMA_MODELS moves it, which is the normal way to keep a library
+    that runs to tens of gigabytes off the system drive, and on Windows
+    it is close to routine. Reading only ~/.ollama there finds nothing
+    and reports the machine as having no models, which is the tool's
+    gap dressed up as the user's."""
+    override = os.environ.get("OLLAMA_MODELS")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    return os.path.expanduser(os.path.join("~", ".ollama", "models"))
+
+
 def ollama_log_paths():
     """Readable Ollama server logs, including stdout/stderr redirects.
 
@@ -866,7 +880,7 @@ def scan_models():
         except (urllib.error.URLError, OSError, ValueError):
             pass
     else:
-        base = os.path.expanduser("~/.ollama/models/manifests")
+        base = os.path.join(ollama_store(), "manifests")
         for reg in glob.glob(os.path.join(base, "*", "*", "*", "*")):
             parts = reg.split(os.sep)
             full = "{}:{}".format(parts[-2], parts[-1])
@@ -3289,7 +3303,7 @@ def residency_prompt(i, words=None):
 def ollama_model_path(tag):
     """The blob a tag's weights live in, read from the manifest rather
     than guessed: /api/show reports sizes, not paths."""
-    base = os.path.expanduser("~/.ollama/models")
+    base = ollama_store()
     name, _, ver = tag.partition(":")
     ver = ver or "latest"
     reg = "registry.ollama.ai"

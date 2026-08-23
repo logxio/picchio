@@ -199,11 +199,15 @@ class _IOAccel:
         """True when macOS itself says the machine is under thermal
         pressure. Presentation only; it never votes on placement."""
         out = _cmd_out(["pmset", "-g", "therm"])
-        m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
-        if m and int(m.group(1)) < 100:
-            return True
-        m = re.search(r"thermal warning level\s*=?\s*(\d+)", out, re.I)
-        return bool(m and int(m.group(1)) > 0)
+        # pmset prints "No thermal warning level has been recorded" on
+        # machines that keep no such record. Reading that as cool is a
+        # claim nobody measured, so it abstains instead.
+        limit = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
+        warn = re.search(r"thermal warning level\s*=?\s*(\d+)", out, re.I)
+        if limit is None and warn is None:
+            return None
+        return bool((limit and int(limit.group(1)) < 100)
+                    or (warn and int(warn.group(1)) > 0))
 
     def vram(self):
         return None  # unified memory: no separate pool to fit into
@@ -325,7 +329,9 @@ class _NVML:
         return _fleet_name([self._name(h) for h in self.hdls])
 
     def throttled(self):
-        # newer drivers renamed the symbol; try both, judge the same bits
+        # newer drivers renamed the symbol; try both, judge the same bits.
+        # A driver carrying neither symbol was never asked, so the answer
+        # is None: absent evidence, not evidence of a cool card.
         for sym in ("nvmlDeviceGetCurrentClocksThrottleReasons",
                     "nvmlDeviceGetCurrentClocksEventReasons"):
             if hasattr(self.lib, sym):
@@ -335,7 +341,7 @@ class _NVML:
                             and r.value & self.THERMAL:
                         return True
                 return False
-        return False
+        return None
 
 
 # ------------------------------------------------------------ AMD
@@ -426,8 +432,10 @@ class _AMDGPU:
         # amdgpu publishes throttle status only inside the binary
         # gpu_metrics blob, whose layout changes per ASIC revision.
         # Reading it wrong would be worse than not reading it, and
-        # thermal pressure is presentation only, so this abstains.
-        return False
+        # thermal pressure is presentation only, so this abstains, and
+        # abstaining means None. Returning False here said the card was
+        # cool on every AMD machine without anyone having looked.
+        return None
 
 
 def _fleet_name(names):

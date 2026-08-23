@@ -1211,7 +1211,8 @@ class GpuSampler:
         self._stop.set()
         self._thread.join(timeout=2)
         return telemetry_summary(self.samples, self.marks,
-                                 self._hot or self._backend.throttled(),
+                                 hotter(self._hot,
+                                        self._backend.throttled()),
                                  self._backend.src)
 
 
@@ -1265,7 +1266,7 @@ def telemetry_summary(samples, marks, hot=False, src=None):
         "idle_w": _med([s.get("gpu_w") for s in pre]),
         "work_med": _med(work),
         "work_n": len(work), "mem_step": step,
-        "work_w": _med(work_w), "throttled": bool(hot),
+        "work_w": _med(work_w), "throttled": hot,
         "dec_w": _med(dec_w), "dec_n": len(dec_w),
     }
 
@@ -1455,8 +1456,10 @@ def os_line(tele, rep=None):
     j = energy_per_token(tele, rep)
     parts.append("{:.2f} J/tok".format(j) if j is not None
                  else "n/a J/tok")
-    if tele.get("throttled"):
-        parts.append("throttled")
+    # thermal state is deliberately absent here: the os line has one
+    # column of slack and the shortest honest marker needs four, so it
+    # would be truncated away every time. It leads the verdict
+    # paragraph instead, where it survives.
     line = "gpu " + ", ".join(parts)
     room = WIDTH - 9  # the label gutter, same as every other block line
     if len(line) > room:
@@ -2038,6 +2041,32 @@ def menu_paint(line):
     return line
 
 
+def hotter(a, b):
+    """One answer from two probes of a three state reading. A measured
+    True wins, a measured False beats an unmeasured None, and two Nones
+    stay None: nobody looked, and saying "not throttled" for that is a
+    claim the meter never made."""
+    if a is True or b is True:
+        return True
+    if a is False or b is False:
+        return False
+    return None
+
+
+def thermal_note(tele):
+    """One sentence when the machine said it was throttling.
+
+    Thermal state never votes on placement, but it undercuts every rate
+    in the block at once, so it leads the paragraph: sentences are
+    dropped from the tail and the lead is the last to go. Silence here
+    is not a claim that the machine was cool; that answer lives in the
+    json, where it can be null."""
+    if not tele or tele.get("off") or tele.get("throttled") is not True:
+        return None
+    return ("Thermally throttled during this run: these rates are a "
+            "floor, not this hardware's ceiling.")
+
+
 def gpu_line(rep, mode):
     if mode == "server":
         return "NO EVIDENCE (the server api exposes no placement)"
@@ -2236,7 +2265,8 @@ def render_verdict(mach, engine_str, model_name, passes, state, para, mode,
     # whose own first field reads busy. They lead because the loop below
     # eats from the tail, and a visible oddity with its reason cut off
     # is worse than one line less of prose
-    lead = [n for n in (doubt, pre_run_idle(tele)[1]) if n]
+    lead = [n for n in (thermal_note(tele), doubt,
+                       pre_run_idle(tele)[1]) if n]
     if lead:
         para = " ".join(lead) + " " + para
     fixed = len(out) + (1 if why else 0) + 1  # + WHY + footer
@@ -2953,7 +2983,7 @@ def watch_summary(samples):
         "fell_idle": (min(dev) < 15 and max(dev) >= 50) if dev else None,
         "available": {"utilization": len(dev), "power": len(watts),
                       "memory": len(mem)},
-        "throttled": False,
+        "throttled": None,  # nothing probed yet
     }
 
 
@@ -3069,7 +3099,7 @@ def watch_json(target, summ, state, exit_code, started, ended, stop_reason,
                            "peak": summ["watts_peak"]},
             "memoryBytes": {"peak": summ["mem_bytes"]},
             "fellIdleBetweenBursts": summ["fell_idle"],
-            "throttled": bool(summ["throttled"]),
+            "throttled": summ["throttled"],
         },
         "verdict": state, "exitCode": exit_code,
         "stopReason": stop_reason, "attribution": "whole_gpu",
@@ -3155,7 +3185,8 @@ def watch(pid=None, engine=None, duration=None, keep_dir=None, as_json=False):
         sys.stderr.write("\n")
     sampler.stop()
     summ = watch_summary(sampler.samples)
-    summ["throttled"] = sampler._hot or sampler._backend.throttled()
+    summ["throttled"] = hotter(sampler._hot,
+                               sampler._backend.throttled())
     state, para = watch_verdict(summ, ctx, placement)
     code = 3 if state == "PARTIAL OFFLOAD" else \
         4 if state in ("GPU IDLE", "CPU FALLBACK") else 0
@@ -6086,7 +6117,7 @@ def selftest():
                                    "mem_info_vram_used"))
         s = am.sample()
         if s and s["mem"] is None and s["dev"] == 97 \
-                and am.device_name() is None and am.throttled() is False:
+                and am.device_name() is None and am.throttled() is None:
             am_ok += 1
         # one unreadable card drops out; the others still report
         with open(os.path.join(am_root, "card0", "device",

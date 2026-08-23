@@ -1,0 +1,3 @@
+name = "picchio-fit"
+main = "worker.js"
+compatibility_date = "2026-04-28"

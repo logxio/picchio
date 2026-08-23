@@ -60,7 +60,8 @@ Add `--json` when you want machine-readable output.
 Add `--ctx 262144` when the problem only appears at a larger context.
 
 The fit check answers before the download, from the file header and the
-registry manifest, and it answers in one word and one move:
+registry manifest, and it answers in one word and one move. In the
+browser: [will it fit?](https://logxio.github.io/picchio/fit.html)
 
 ```
 FITS. The whole model fits in this machine's memory.

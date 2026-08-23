@@ -4183,9 +4183,13 @@ def plan_budget(mach):
         vram = None
     if vram:
         total, free = vram
+        try:
+            card = gpu_meters.machine_gpu_name()
+        except Exception:
+            card = None
         return {"bytes": max(0, free - VRAM_SPARE), "kind": "gpu",
                 "total": total, "free": free, "spare": VRAM_SPARE,
-                "name": mach.get("chip", ""),
+                "name": card or "this card",
                 "label": "free video memory less the engine's spare"}
     if not ram:
         return {"bytes": None, "kind": None, "label": "ram size unknown"}
@@ -4252,6 +4256,17 @@ def plan_speed_source(cache):
                       "experts, and its bandwidth arithmetic does not "
                       "transfer. Diagnose a dense model once for the "
                       "estimate.".format(cache.get("model_name", "?")))
+    # decode x bytes is this machine's bandwidth only while every layer
+    # was on the gpu. A partial offload measures a blend of the card and
+    # the cpu: the 27B at 38 of 66 layers priced this machine at 94 GB/s
+    # and would have projected 16 tok/s for a 9B that measured 78 here.
+    if cache.get("state") != "HEALTHY":
+        return None, ("speed: the cached run ({}) did not keep the whole "
+                      "model on the gpu ({}), so its decode is a blend of "
+                      "card and cpu, not this machine's bandwidth. "
+                      "Diagnose a model that fits once for the "
+                      "estimate.".format(cache.get("model_name", "?"),
+                                         cache.get("state") or "no state"))
     bw = cache["rates"]["decode"] * cache["model_bytes"]
     return bw, "calibrated by {} at {:.1f} tok/s decode".format(
         cache.get("model_name", "?"), cache["rates"]["decode"])
@@ -5993,14 +6008,25 @@ def selftest():
     # 6: a cached dense run prices a dense target and refuses a moe
     #    target; a cached moe run refuses to calibrate at all
     bw, note = plan_speed_source({"model_bytes": 5 * gib, "moe": False,
-                                  "model_name": "m",
+                                  "model_name": "m", "state": "HEALTHY",
                                   "rates": {"decode": 20.0}})
     mbw, mnote = plan_speed_source({"model_bytes": 5 * gib, "moe": True,
-                                    "model_name": "m",
+                                    "model_name": "m", "state": "HEALTHY",
                                     "rates": {"decode": 20.0}})
+    # a partial offload prices the cpu as if it were the card: refused,
+    # and so is a cache too old to say which run it was
+    pbw, pnote = plan_speed_source({"model_bytes": 5 * gib, "moe": False,
+                                    "model_name": "m",
+                                    "state": "PARTIAL OFFLOAD",
+                                    "rates": {"decode": 20.0}})
+    obw, _on = plan_speed_source({"model_bytes": 5 * gib, "moe": False,
+                                  "model_name": "m",
+                                  "rates": {"decode": 20.0}})
     if bw == 100 * gib and plan_est_decode(bw, 10 * gib, False) == 10.0 \
             and plan_est_decode(bw, 10 * gib, True) is None \
-            and mbw is None and "mixture of experts" in mnote:
+            and mbw is None and "mixture of experts" in mnote \
+            and pbw is None and "not this machine's bandwidth" in pnote \
+            and obw is None:
         pl_ok += 1
     # 7: the layer split is pinned to what the engine itself decided on
     #    a real card. On the 4070 SUPER, llama.cpp saw 10919 MiB free,

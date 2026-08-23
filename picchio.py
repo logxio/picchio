@@ -4125,7 +4125,18 @@ def plan_is_moe(meta):
     return bool(_arch_get(meta, "expert_count"))
 
 
-def kv_account(meta, ctx=CTX):
+KV_BYTES = {"f16": 2.0, "bf16": 2.0, "f32": 4.0,
+            "q8_0": 34 / 32.0, "q4_0": 18 / 32.0}
+# Bytes per cached element. The three the engine was asked to allocate
+# on a 4070 SUPER answered exactly: 9B at ctx 4096 read 128.00 MiB at
+# f16, 68.00 at q8_0 and 36.00 at q4_0, which is 2, 34/32 and 18/32 to
+# the byte (a ggml block is 32 values plus its scales). f32 and bf16
+# are the same layout at a different width. Anything else is refused
+# rather than guessed: a kv figure is the largest number on the page
+# at a long context.
+
+
+def kv_account(meta, ctx=CTX, kv="f16"):
     """(kv bytes at ctx, note). Formula: ctx x attention layers x kv
     heads x (key length + value length) x 2 bytes of f16. Hybrid
     attention models mark every Nth layer as full attention
@@ -4149,12 +4160,21 @@ def kv_account(meta, ctx=CTX):
         klen = vlen = int(_arch_get(meta, "embedding_length")) // int(heads)
     if not (blocks and heads_kv and klen and vlen):
         return None, "header lacks the kv geometry keys"
+    width = KV_BYTES.get(str(kv).lower())
+    if width is None:
+        return None, "kv type {} is not priced here".format(kv)
     interval = int(_arch_get(meta, "full_attention_interval") or 1)
     att = max(1, int(blocks) // max(1, interval))
-    note = "at ctx {}".format(ctx)
+    # the dtype is the one assumption in this account, and at a long
+    # context it is the biggest number on the page: a 256k kv is 16 GiB
+    # at f16 and 8 at q8_0. The id card refuses to assume a default and
+    # reads the runtime's own dtype; plan runs before any runtime
+    # exists, so it says which one it priced instead of staying quiet.
+    note = "at ctx {}, kv {}".format(ctx, str(kv).lower())
     if interval > 1:
         note += ", {} of {} layers attend".format(att, blocks)
-    return int(ctx) * att * int(heads_kv) * (int(klen) + int(vlen)) * 2, note
+    return int(round(int(ctx) * att * int(heads_kv)
+                     * (int(klen) + int(vlen)) * width)), note
 
 
 PLAN_COMPUTE = 512 * 1024 ** 2  # the graph buffer: sched_reserve
@@ -4353,7 +4373,7 @@ def plan_target(arg):
     return arg, size, show.get("model_info") or {}, None
 
 
-def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX):
+def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX, kv="f16"):
     """One accounted row: need, state, estimate; honest holes where
     the evidence is missing.
 
@@ -4364,7 +4384,9 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX):
         return {"name": name, "need": None, "state": "not judged",
                 "est": None, "moe": False, "layers": None,
                 "note": note or "no size available"}
-    kv, kv_note = kv_account(meta, ctx) if meta else (None, note or "?")
+    kv_bytes, kv_note = kv_account(meta, ctx, kv) if meta \
+        else (None, note or "?")
+    kv = kv_bytes
     need = file_bytes + (kv or 0) + PLAN_COMPUTE
     moe = plan_is_moe(meta) if meta else False
     budget = wall.get("bytes")
@@ -4451,7 +4473,7 @@ def render_plan_one(row, wall, bw, speed_note):
     return "\n".join(out)
 
 
-def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX):
+def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX, kv="f16"):
     out = ["picchio plan: {} model{} on this machine".format(
         len(rows), "" if len(rows) == 1 else "s")]
     budget = wall.get("bytes")
@@ -4464,7 +4486,7 @@ def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX):
         out.append("budget {} ({})".format(_gib(budget), wall["label"]))
     else:
         out.append("budget not judged: " + wall["label"])
-    out.append("kv counted at ctx {}".format(ctx))
+    out.append("kv counted at ctx {}, {}".format(ctx, kv))
     out.append("")
     calibrated = bw is not None
     head = "  {:<30}{:>9}   {:<7}".format("model", "need", "fit")
@@ -4500,17 +4522,19 @@ def render_plan_scan(rows, wall, bw, speed_note, ctx=CTX):
 
 def plan_cli(argv):
     if argv[:1] in (["-h"], ["--help"]):
-        print("usage: picchio plan [MODEL] [--ctx N]\n"
+        print("usage: picchio plan [MODEL] [--ctx N] [--kv TYPE]\n"
               "the capacity account before you download or load: how much\n"
               "of it lands on the gpu (gguf header geometry against this\n"
               "machine's free video memory), and, once one real diagnosis\n"
               "has been run here, an estimated decode rate. --ctx sets the\n"
               "context the kv cache is counted at; a long context is often\n"
-              "what pushes a model off the card. With no MODEL, accounts\n"
+              "what pushes a model off the card. --kv prices the cache at\n"
+              "f16 (the default), bf16, f32, q8_0 or q4_0. With no MODEL,\n"
+              "accounts\n"
               "every model found on this machine. Estimates are labeled\n"
               "and never appear in a verdict block.")
         sys.exit(0)
-    ctx = CTX
+    ctx, kv = CTX, "f16"
     argv = list(argv)
     if "--ctx" in argv:
         i = argv.index("--ctx")
@@ -4519,14 +4543,22 @@ def plan_cli(argv):
             sys.exit("picchio plan: --ctx needs a positive number of tokens")
         ctx = int(argv[i + 1])
         del argv[i:i + 2]
+    if "--kv" in argv:
+        i = argv.index("--kv")
+        if i + 1 >= len(argv) or str(argv[i + 1]).lower() not in KV_BYTES:
+            sys.exit("picchio plan: --kv takes one of {}".format(
+                ", ".join(sorted(KV_BYTES))))
+        kv = str(argv[i + 1]).lower()
+        del argv[i:i + 2]
     if len(argv) > 1:
-        sys.exit("picchio plan: usage: picchio plan [MODEL] [--ctx N]")
+        sys.exit("picchio plan: usage: picchio plan [MODEL] [--ctx N] "
+                 "[--kv TYPE]")
     mach = machine_info()
     wall = plan_budget(mach)
     bw, speed_note = plan_speed_source(load_cache())
     if argv:
         name, fb, meta, note = plan_target(argv[0])
-        row = plan_row(name, fb, meta, note, wall, bw, ctx)
+        row = plan_row(name, fb, meta, note, wall, bw, ctx, kv)
         print(colorize(render_plan_one(row, wall, bw, speed_note)))
         sys.exit(0)
     sizes = {}
@@ -4541,11 +4573,11 @@ def plan_cli(argv):
     for label, note, arg, _size in scan_models()[0]:
         if note == "gguf":
             n, fb, meta, why = plan_target(arg)
-            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx))
+            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx, kv))
         elif note == "ollama":
             n, fb, meta, why = plan_target(arg)
             fb = fb or sizes.get(arg)
-            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx))
+            rows.append(plan_row(n, fb, meta, why, wall, bw, ctx, kv))
         else:
             rows.append({"name": label, "need": None, "est": None,
                          "moe": False, "state": "not judged",
@@ -4553,7 +4585,7 @@ def plan_cli(argv):
     if not rows:
         sys.exit("picchio plan: no models found on this machine; give "
                  "it a .gguf path or an ollama tag.")
-    print(colorize(render_plan_scan(rows, wall, bw, speed_note, ctx)))
+    print(colorize(render_plan_scan(rows, wall, bw, speed_note, ctx, kv)))
     sys.exit(0)
 
 
@@ -6023,7 +6055,7 @@ def selftest():
     # and the kv formula must land on the engine's own committed
     # allocation figures; the speed gate refuses everything but a
     # cached dense measurement
-    pl_ok, pl_all = 0, 7
+    pl_ok, pl_all = 0, 8
 
     def synth_gguf(arch, kvs):
         out = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", 0),
@@ -6059,7 +6091,17 @@ def selftest():
     #    matching the engine's allocation for the local 35B
     if kv35 == 80 * 1024 ** 2 and plan_is_moe(m35) and not plan_is_moe(m9):
         pl_ok += 1
-    # 3: head_dim falls back to embedding over heads when the header
+    # 3: the quantized cache is priced off the engine's own allocations,
+    #    not off the block format alone. Asked for the same 9B at ctx
+    #    4096, a 4070 SUPER read 128.00 MiB at f16, 68.00 at q8_0 and
+    #    36.00 at q4_0; the account has to land on each to the byte, and
+    #    refuse a type nobody measured rather than guess its width.
+    if all(kv_account(m9, 4096, t)[0] == want * 1024 ** 2
+           for t, want in (("f16", 128), ("q8_0", 68), ("q4_0", 36))) \
+            and kv_account(m9, 4096, "q5_1")[0] is None \
+            and "kv q8_0" in kv_account(m9, 4096, "q8_0")[1]:
+        pl_ok += 1
+    # 4: head_dim falls back to embedding over heads when the header
     #    has no key/value length (the classic dense layout)
     kvf, _n = kv_account(gguf_meta_stream(synth_gguf("llama", {
         "block_count": 32, "attention.head_count": 32,

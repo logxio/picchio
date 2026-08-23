@@ -5,18 +5,29 @@ import { judge, readHeader, CTX_CHAT, CTX_LONG } from "./fit.js";
 // Face link needs nothing: that host answers the browser directly.
 const WORKER = location.hostname === "localhost" || location.hostname === "127.0.0.1"
   ? "http://127.0.0.1:8787"        // wrangler dev, for working on this page
-  : "https://picchio-fit.nxsio.workers.dev";
+  : "https://fit.yansu.me";
 const HF = ["huggingface.co", "hf-mirror.com"];
 const WINDOW = 256 * 1024;   // every key the account needs closes in 3 KB
 const GROW = [WINDOW, 4 << 20, 16 << 20, 64 << 20];
 
+// Memory is the only thing the account reads off this list, so the
+// labels exist to be recognised: somebody knows they bought a 3090
+// without knowing it holds 24 GB. Every size a buyer can actually have
+// is here, which is what the Mac side was missing most: the machines
+// people buy to run a 70B are the 64, 96 and 128 GB ones.
 const MACHINES = [
   ["Mac 8 GB", 8, true], ["Mac 16 GB", 16, true], ["Mac 24 GB", 24, true],
-  ["Mac 36 GB", 36, true], ["Mac 48 GB", 48, true],
+  ["Mac 32 GB", 32, true], ["Mac 36 GB", 36, true], ["Mac 48 GB", 48, true],
+  ["Mac 64 GB", 64, true], ["Mac 96 GB", 96, true],
+  ["Mac 128 GB", 128, true],
+  ["RTX 3060 12 GB", 12, false], ["RTX 3080 10 GB", 10, false],
+  ["RTX 3090 24 GB", 24, false],
   ["RTX 4060 8 GB", 8, false], ["RTX 4060 Ti 16 GB", 16, false],
   ["RTX 4070 12 GB", 12, false], ["RTX 4070 Ti S 16 GB", 16, false],
   ["RTX 4080 16 GB", 16, false], ["RTX 4090 24 GB", 24, false],
+  ["RTX 5070 Ti 16 GB", 16, false], ["RTX 5080 16 GB", 16, false],
   ["RTX 5090 32 GB", 32, false],
+  ["RX 7900 XTX 24 GB", 24, false], ["RX 7800 XT 16 GB", 16, false],
 ];
 
 const $ = (id) => document.getElementById(id);

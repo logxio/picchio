@@ -35,6 +35,7 @@ if os.path.isdir(_SOURCE_ROOT) and _SOURCE_ROOT not in sys.path:
     sys.path.insert(0, _SOURCE_ROOT)
 
 from picchio_core import gpu_meters  # noqa: E402  (needs the path above)
+from picchio_core import remote  # noqa: E402
 from picchio_core.host import (  # noqa: E402
     pid_alive, process_identity, process_list, windows_machine)
 # share's output shapes and the whole of vet live in the module layer:
@@ -4369,6 +4370,33 @@ def _gib(n):
     return "{:.1f} GiB".format(n / 1024 ** 3)
 
 
+def plan_remote(arg):
+    """(name, bytes, meta, note, source) for something not on this disk,
+    or None when the argument does not name one.
+
+    The whole point of planning is to answer before the download, so a
+    url or a registry tag is read the only way that keeps that promise:
+    the manifest for the size, a ranged read of the header for the
+    geometry, and not one byte of the weights."""
+    url = remote.hf_resolve(arg)
+    if url:
+        say = "reading the header from {} (the weights are not " \
+              "downloaded)".format(urllib.parse.urlsplit(url).netloc)
+        sys.stderr.write("picchio plan: {}\n".format(say))
+        meta, total = remote.head_bytes(url, gguf_meta_stream)
+        return (os.path.basename(urllib.parse.urlsplit(url).path) or arg,
+                total, meta, None, "over the network, header only")
+    if not remote.ollama_ref(arg):
+        return None
+    sys.stderr.write("picchio plan: asking the ollama registry about {} "
+                     "(the weights are not downloaded)\n".format(arg))
+    digest, size = remote.ollama_manifest(arg)
+    meta, total = remote.head_bytes(
+        remote.ollama_blob_url(arg, digest), gguf_meta_stream)
+    return (arg, total or size, meta, None,
+            "ollama registry, manifest and header only")
+
+
 def plan_target(arg):
     """Resolve one plan argument into (name, file_bytes, meta, note):
     a .gguf path is read directly, an ollama tag through /api/show
@@ -4441,8 +4469,10 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX, kv="f16"):
             "note": None if meta else (note or "header unreadable")}
 
 
-def render_plan_one(row, wall, bw, speed_note):
+def render_plan_one(row, wall, bw, speed_note, source=None):
     out = ["picchio plan: " + row["name"]]
+    if source:
+        out.append("  read      {:>10}   {}".format("header", source))
     if row["need"] is None:
         out.append("  " + row["note"])
         return "\n".join(out)
@@ -4585,9 +4615,25 @@ def plan_cli(argv):
     wall = plan_budget(mach)
     bw, speed_note = plan_speed_source(load_cache())
     if argv:
-        name, fb, meta, note = plan_target(argv[0])
+        # what the argument is decides where it is read, not what
+        # happens to be running: a url is always remote, and a tag
+        # prefers the local daemon only because a loaded model can
+        # answer more than a manifest can
+        source = None
+        local = os.path.isfile(argv[0]) or (
+            remote.ollama_ref(argv[0]) and ollama_reachable()
+            and ollama_ps_entry(argv[0]) is not None)
+        if not local:
+            try:
+                found = plan_remote(argv[0])
+            except remote.RemoteError as exc:
+                sys.exit("picchio plan: {}".format(exc))
+            if found:
+                name, fb, meta, note, source = found
+        if source is None:
+            name, fb, meta, note = plan_target(argv[0])
         row = plan_row(name, fb, meta, note, wall, bw, ctx, kv)
-        print(colorize(render_plan_one(row, wall, bw, speed_note)))
+        print(colorize(render_plan_one(row, wall, bw, speed_note, source)))
         sys.exit(0)
     sizes = {}
     if ollama_reachable():

@@ -2,7 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>Catch local LLMs spilling into the CPU</h1>
+<h1>See whether your local LLM is actually using the GPU</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>

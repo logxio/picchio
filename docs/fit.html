@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Will this model fit? — Picchio</title>
+<meta name="description" content="Paste a Hugging Face GGUF link or an Ollama tag, pick your machine, and see whether the model fits before you download it.">
+<style>
+:root{
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --ink:#111111; --muted:#5f6368; --line:#e3e3e0; --bg:#f9f9f8; --card:#ffffff;
+  --go:#00827f; --wait:#8a6100; --stop:#b42318;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+     line-height:1.5;-webkit-font-smoothing:antialiased}
+.shell{max-width:720px;margin:0 auto;padding:24px 20px 72px}
+header{display:flex;justify-content:space-between;align-items:center;
+       padding:8px 0 32px;font-size:14px}
+.brand{font-family:var(--mono);font-weight:700;letter-spacing:.08em;
+       color:var(--ink);text-decoration:none}
+h1{font-size:30px;line-height:1.25;margin:0 0 28px;font-weight:640;letter-spacing:-.02em}
+h1 .b{color:var(--muted);font-weight:500;display:block}
+input[type=text]{width:100%;font-family:var(--mono);font-size:15px;padding:14px 15px;
+  border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink)}
+input[type=text]:focus{outline:none;border-color:var(--go)}
+.pick{margin:20px 0 4px;font-size:13px;color:var(--muted)}
+.grid{display:flex;flex-wrap:wrap;gap:7px}
+button.m{font:inherit;font-size:13px;padding:7px 12px;border:1.5px solid var(--line);
+  border-radius:999px;background:var(--card);color:var(--ink);cursor:pointer}
+button.m:hover{border-color:var(--muted)}
+button.m[aria-pressed=true]{border-color:var(--go);background:var(--go);color:#fff}
+.probe{margin-top:14px;font-size:13px;color:var(--muted)}
+.probe code{font-family:var(--mono);font-size:12px;background:#efefec;
+  padding:2px 6px;border-radius:5px}
+#out{margin-top:32px}
+.light{border:1.5px solid var(--line);border-left-width:6px;border-radius:12px;
+  background:var(--card);padding:20px 22px}
+.light .word{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.02em}
+.light .say{margin-top:8px;font-size:17px}
+.light .after{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);
+  font-size:14px;color:var(--muted)}
+.go{border-left-color:var(--go)} .go .word{color:var(--go)}
+.wait{border-left-color:var(--wait)} .wait .word{color:var(--wait)}
+.stop{border-left-color:var(--stop)} .stop .word{color:var(--stop)}
+.dim{border-left-color:var(--muted)} .dim .word{color:var(--muted);font-size:17px}
+table{width:100%;border-collapse:collapse;margin-top:20px;font-size:14px}
+td{padding:7px 0;border-bottom:1px solid var(--line)}
+td:last-child{text-align:right;font-family:var(--mono)}
+td.k{color:var(--muted)}
+.star{display:inline-block;margin-top:26px;font-size:14px;padding:10px 16px;
+  border:1.5px solid var(--ink);border-radius:9px;color:var(--ink);
+  text-decoration:none;font-weight:560}
+.foot{margin-top:34px;font-size:13px;color:var(--muted)}
+.foot a{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="shell">
+<header>
+  <a class="brand" href="https://github.com/logxio/picchio">PICCHIO</a>
+  <a href="https://github.com/logxio/picchio" style="color:var(--muted);text-decoration:none">Source ↗</a>
+</header>
+
+<h1>Before you download: will it fit?
+<span class="b">After you run: did the GPU actually do the work?</span></h1>
+
+<input type="text" id="q" spellcheck="false" autocomplete="off"
+  placeholder="Paste a Hugging Face GGUF link or an Ollama tag">
+
+<div class="pick">Your machine</div>
+<div class="grid" id="machines"></div>
+<div class="probe">Numbers assume an idle machine. Something already on the
+  card takes layers away from the model. &nbsp;Or run
+  <code>picchio plan MODEL</code> to read your own.</div>
+
+<div id="out"></div>
+
+<div class="foot">
+  Picchio reads the model's header over the network and stops there. The
+  weights stay where they are.
+</div>
+</div>
+<script type="module" src="./fit-ui.js"></script>
+</body>
+</html>

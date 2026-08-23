@@ -6772,17 +6772,21 @@ def selftest():
             and any("and 5 more" in x for x in log):
         gd_ok += 1
     # 9: commands printed by non-interactive discovery name the entry that
-    # actually ran. A downloaded ./picchio must never instruct the reader
-    # to invoke a source file that does not exist beside it.
+    # actually ran. A downloaded ./picchio on POSIX or picchio.pyz on
+    # Windows must never name a source file that does not exist beside it.
+    downloaded = "picchio.pyz" if os.name == "nt" else "./picchio"
     old_argv0 = sys.argv[0]
     try:
-        sys.argv[0] = "./picchio"
+        sys.argv[0] = downloaded
         zip_call = invocation()
         sys.argv[0] = "picchio.py"
         source_call = invocation()
     finally:
         sys.argv[0] = old_argv0
-    if zip_call == "./picchio" and source_call == "python3 picchio.py":
+    zip_want = "python picchio.pyz" if os.name == "nt" else "./picchio"
+    source_want = "python picchio.py" if os.name == "nt" \
+        else "python3 picchio.py"
+    if zip_call == zip_want and source_call == source_want:
         gd_ok += 1
     vp_ok, vp_all = 0, 3
     if parse_engine_version("version: 9430 (d48a56ef)") == "b9430":

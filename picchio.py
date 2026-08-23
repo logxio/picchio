@@ -4212,7 +4212,7 @@ def plan_layers(file_bytes, kv, meta, wall):
     for the 27B. It moves by a layer as the desktop takes and returns
     video memory, which is why it is printed as an estimate."""
     blocks = _arch_get(meta, "block_count") if meta else None
-    if not blocks or not wall.get("bytes") or wall.get("kind") != "gpu":
+    if not blocks or wall.get("bytes") is None or wall.get("kind") != "gpu":
         return None
     total = int(blocks) + 1  # the output layer offloads alongside them
     per_layer = file_bytes / float(total) + (kv or 0) / float(total)
@@ -4360,8 +4360,19 @@ def plan_row(name, file_bytes, meta, note, wall, bw, ctx=CTX):
     budget = wall.get("bytes")
     layers = plan_layers(file_bytes, kv, meta, wall)
     state = plan_state(need, budget) if budget else "not judged"
-    if budget and wall.get("kind") == "gpu" and state != "fits":
-        state = "partial" if layers and layers[0] else "cpu"
+    if wall.get("kind") == "gpu":
+        # on a card the layer split is the answer, and the only one:
+        # the fits/tight/no bands are the system-ram heuristic, and
+        # letting both speak produced "66 of 66 layers on the gpu, the
+        # rest on the cpu" for a model that fit with room to spare
+        if layers is None:
+            state = "fits" if budget and need <= budget else "partial"
+        elif layers[0] >= layers[1]:
+            state = "fits"
+        elif layers[0] > 0:
+            state = "partial"
+        else:
+            state = "cpu"
     return {"name": name, "need": need, "state": state, "moe": moe,
             "est": plan_est_decode(bw, file_bytes, moe),
             "kv": kv, "kv_note": kv_note, "file": file_bytes,
@@ -4386,24 +4397,29 @@ def render_plan_one(row, wall, bw, speed_note):
                .format(_gib(PLAN_COMPUTE)))
     out.append("  need      {:>10}".format(_gib(row["need"])))
     budget = wall.get("bytes")
-    if budget and wall.get("kind") == "gpu":
+    if wall.get("kind") == "gpu":
         out.append("  gpu total {:>10}   {}".format(
             _gib(wall["total"]), wall.get("name") or "this card"))
-        out.append("  gpu free  {:>10}   right now; the desktop and the "
-                   "driver hold {}".format(
-                       _gib(wall["free"]),
-                       _gib(wall["total"] - wall["free"])))
+        out.append("  gpu free  {:>10}   right now; {} is already in "
+                   "use".format(_gib(wall["free"]),
+                                _gib(wall["total"] - wall["free"])))
         out.append("  budget    {:>10}   the engine leaves {} of the card "
                    "spare".format(_gib(budget), _gib(wall["spare"])))
     elif budget:
         out.append("  budget    {:>10}   {}".format(_gib(budget),
                                                     wall["label"]))
-    if not budget:
+    if wall.get("kind") != "gpu" and not budget:
         out.append("  verdict   not judged   " + wall["label"])
-    elif row["layers"] and row["state"] != "fits":
+    elif row["layers"] and row["layers"][0] == 0:
+        out.append("  verdict   {:>10}   no room on the card right now; "
+                   "every layer would run on the cpu".format(row["state"]))
+    elif row["layers"] and row["state"] in ("partial", "cpu"):
         fit, total = row["layers"]
         out.append("  verdict   {:>10}   about {} of {} layers on the gpu, "
                    "the rest on the cpu".format(row["state"], fit, total))
+    elif row["state"] == "partial":
+        out.append("  verdict   {:>10}   too big for the card; the layers "
+                   "that miss run on the cpu".format(row["state"]))
     else:
         out.append("  verdict   {:>10}   {:.0f}% of budget".format(
             row["state"], 100.0 * row["need"] / budget))

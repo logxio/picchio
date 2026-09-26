@@ -45,6 +45,13 @@ You can also point it straight at a model or a running server:
 It runs on macOS, Linux and Windows with Python 3.9+. The download is one
 file and uses only the standard library.
 
+## Next
+
+- Collect more Linux Radeon runs to check GPU activity and multi-card results against real engine output, building on the [RX 7900 XTX report](https://github.com/logxio/picchio/issues/1).
+- Verify the complete Ollama path on Windows hardware, from finding a model to reporting where it ran.
+
+[Contribute a run or a fix](CONTRIBUTING.md).
+
 ## Use the result
 
 | I want to… | Run |

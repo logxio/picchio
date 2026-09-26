@@ -113,6 +113,18 @@ in [examples/](examples/).
 Point Picchio at a GGUF path, an Ollama tag or a running llama-server URL.
 The result tells you where the model ran and which number is safe to compare.
 
+### One run, two sources of evidence
+
+The [llama-bench documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/llama-bench/README.md) shows `backends`, `n_gpu_layers`, and repeated-test `avg_ts` / `stddev_ts` output. Its `n_gpu_layers` is a test setting, not a measurement of GPU activity. The [llama-cli documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md) includes `--show-timings`. Picchio reads the engine's output and samples the OS during that same run:
+
+| Input and source | Output in the public Apple M5 / Qwen3.5-9B receipts | What it can establish |
+|---|---|---|
+| llama.cpp stderr from each pass | `offloaded 33/33` with prompt/eval timings in the [GPU run](examples/raw/healthy-metal/); `offloaded 0/33` in the [forced CPU run](examples/raw/cpu-fallback/) | Actual layer placement and engine timing as reported by llama.cpp; not independent proof that the GPU was busy. |
+| Picchio's time-aligned macOS GPU samples from those same passes | [GPU run](examples/healthy-metal.txt): 99% work, +6.0 GiB, 11.0 W, 0.52 J/token; [forced CPU run](examples/cpu-fallback.txt): 5% work, +0.3 GiB, 0.1 W, 0.01 J/token | OS-side activity, memory and energy alongside the engine report; these are whole-GPU readings, not per-process attribution or total-system energy. |
+| Picchio's combined result | `HEALTHY` versus `SILENT CPU FALLBACK`, with `--device none -ngl 0` identified in the CPU run | A diagnosis for each recorded run. The different placement and rates come from the GPU settings, not from Picchio accelerating inference. |
+
+These are two runs of the same model on one machine. No `llama-bench` throughput number is mixed into this comparison.
+
 ## Send me your machine
 
 ```sh

@@ -2,7 +2,7 @@
 
 <img src="assets/picchio-mark-a.svg" width="96" alt="pixel woodpecker on a trunk">
 
-<h1>See whether your local LLM is actually using the GPU</h1>
+<h1>Inference Placement Receipts for local LLMs</h1>
 
 <p>
 <a href="https://github.com/logxio/picchio/actions/workflows/selftest.yml"><img src="https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg" alt="selftest"></a>
@@ -12,7 +12,7 @@
 
 <p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<p>A 27B model still answered at 5.7 tok/s. Picchio found 28 of 66 layers on the CPU and reported a memory-fit cause. <a href="examples/windows-4070s-27b.txt">Inspect the recorded result</a> · <a href="examples/contest-demo-v2.mp4">Watch the 59-second demo</a>.</p>
+<p>An inference placement receipt joins the engine's layer placement, the system's GPU readings and the run's separate speed measurements. It shows where a local model actually ran when a single tok/s number cannot. A 27B model still answered at 5.7 tok/s, but its <a href="examples/windows-4070s-27b.txt">recorded receipt</a> showed 28 of 66 layers on the CPU and a memory-fit cause. <a href="examples/contest-demo-v3.mp4">Watch the demo</a>.</p>
 
 <img src="assets/picchio-demo.svg" width="680" alt="Recorded Qwen3.8-27B run: 38 of 66 layers on GPU, 28 on CPU, 5.7 tok/s warm decode">
 

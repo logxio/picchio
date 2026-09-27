@@ -12,7 +12,9 @@
 
 <p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<img src="assets/picchio-demo.svg" width="680" alt="Qwen3.8-27B completes while Picchio catches 28 of 66 layers running on the CPU and a 14 times decode slowdown">
+<p>A 27B model still answered at 5.7 tok/s. Picchio found 28 of 66 layers on the CPU and reported a memory-fit cause. <a href="examples/windows-4070s-27b.txt">Inspect the recorded result</a> · <a href="examples/contest-demo-v2.mp4">Watch the 59-second demo</a>.</p>
+
+<img src="assets/picchio-demo.svg" width="680" alt="Recorded Qwen3.8-27B run: 38 of 66 layers on GPU, 28 on CPU, 5.7 tok/s warm decode">
 
 </div>
 

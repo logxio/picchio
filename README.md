@@ -52,6 +52,8 @@ file and uses only the standard library.
 - Collect more Linux Radeon runs to check GPU activity and multi-card results against real engine output, building on the [RX 7900 XTX report](https://github.com/logxio/picchio/issues/1).
 - Verify the complete Ollama path on Windows hardware, from finding a model to reporting where it ran.
 
+Public work spans July through September 2026, with [v1.0.0](https://github.com/logxio/picchio/releases/tag/v1.0.0) released in August. In [Issue #1](https://github.com/logxio/picchio/issues/1), a Radeon user reported missing speed readings and an incorrect cold-run breakdown; the maintainer replied with a fix and requested a new verdict. The user has not posted that rerun, so the corrected result on that machine remains unverified.
+
 [Contribute a run or a fix](CONTRIBUTING.md).
 
 ## Use the result

@@ -137,10 +137,12 @@ def check_pair(gpu, cpu):
     require(gpu["model_path"] == cpu["model_path"]
             and gpu["passes"][0]["gpu_device"] == "Apple M5",
             "M5 logs disagree on model path or Metal device")
-    for field in ("prompt_tokens", "eval_tokens", "threads", "cores",
-                  "model_params", "model_size", "sampling"):
-        require(gpu["passes"][0][field] == cpu["passes"][0][field],
-                "M5 raw passes differ on {}".format(field))
+    for number, (gpu_pass, cpu_pass) in enumerate(
+            zip(gpu["passes"], cpu["passes"]), 1):
+        for field in ("prompt_tokens", "eval_tokens", "threads", "cores",
+                      "model_params", "model_size", "sampling"):
+            require(gpu_pass[field] == cpu_pass[field],
+                    "M5 pass {} differs on {}".format(number, field))
     require(gpu["passes"][0]["offload_n"] == 33
             and cpu["passes"][0]["offload_n"] == 0
             and gpu["passes"][0]["offload_total"] == 33

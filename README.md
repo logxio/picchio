@@ -19,9 +19,15 @@
 </div>
 
 A separate [Linux CUDA 27B receipt](examples/linux-5090-27b.txt) records all
-66 layers on an RTX 5090, 92% GPU work and 81.5 tok/s warm decode. Recalculate
-it from [three captured passes and NVML samples](examples/raw/linux-5090-27b/),
-alongside the Apple M5 GPU and forced-CPU runs, without a GPU or model download:
+66 layers on an RTX 5090, 92% GPU work and 81.5 tok/s warm decode. Its
+[three captured passes and NVML samples](examples/raw/linux-5090-27b/) are
+public alongside the Apple M5 GPU and forced-CPU runs.
+
+An [author-run Kaggle Linux T4 pair](examples/raw/kaggle-t4-9b/) held the
+same Qwen3.5-9B file and exact per-pass prompts: the [GPU receipt](examples/kaggle-t4-9b-gpu.txt)
+shows 33/33 layers and 40.1 tok/s warm decode, while the
+[forced-CPU receipt](examples/kaggle-t4-9b-cpu.txt) shows 0/33 and
+2.6 tok/s; recalculate these captured receipts without a GPU or model download:
 
 ```sh
 python3 scripts/replay_receipts.py

@@ -1,0 +1,11 @@
+{
+  "model": "Qwen3.5-9B-Q4_K_M.gguf",
+  "model_url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/9f870da1e1c96da710c13926d36c6946bb7ebb38/Qwen3.5-9B-Q4_K_M.gguf",
+  "revision": "9f870da1e1c96da710c13926d36c6946bb7ebb38",
+  "model_bytes": 5680522464,
+  "model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "expected_model_sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
+  "engine_archive_sha256": "c10e4c58b2ff953e69564fb5e37fddc5a105ec00e8e278e1ebeab3de374e6787",
+  "picchio_zipapp_sha256": "87632c11bce5afb97d012e8920e0f7b28bedfced635c5c3bd0ec744b5336da94",
+  "utc": "2026-09-28T13:05:52.966345+00:00"
+}

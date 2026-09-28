@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "env",
+    "PYTHONPATH=/tmp/picchio-fresh-linux/fixed-nonce",
+    "/usr/bin/python3",
+    "/tmp/picchio-fresh-linux/picchio.pyz",
+    "/tmp/picchio-fresh-linux/Qwen3.5-9B-Q4_K_M.gguf",
+    "--bin",
+    "/tmp/picchio-fresh-linux/llama-completion-wrapper",
+    "--passes",
+    "3",
+    "--keep-logs",
+    "/kaggle/working/picchio-fresh-linux-evidence/gpu",
+    "--",
+    "-ngl",
+    "99"
+  ],
+  "start_utc": "2026-09-28T13:08:01.593611+00:00",
+  "timeout_s": 600,
+  "returncode": 0,
+  "wall_s": 26.78821324500001,
+  "end_utc": "2026-09-28T13:08:28.381831+00:00"
+}

@@ -1,0 +1,5 @@
+{
+  "sitecustomize_sha256": "ab17cf575442564072087cf5b1b35811b43e7555a6aa6b0011f6aaa68bc5e7e4",
+  "run_id": "44332211",
+  "scope": "only os.urandom(4) called in picchio.main; no engine or sampler code changed"
+}

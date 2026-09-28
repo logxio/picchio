@@ -1,0 +1,16 @@
+model    Qwen3.5-9B Q4_K_M, 8.95 B, 5.28 GiB, llama.cpp b0.5.0-dev
+gpu      NOT ENGAGED: 0/33 layers on GPU (CUDA: Tesla T4) [--de..]
+os       gpu idle 0%, work 0%, mem +0.0 GiB, 20.2 W, 7.89 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold         9.5 tok/s      2.6 tok/s      0.9 tok/s
+  warm mid     9.5 tok/s      2.6 tok/s      0.9 tok/s
+  warm span         9~10        2.5~2.6        0.9~0.9
+where the cold pass went (138.9 s, 2/4 threads, weights cached)
+  load weights    5.5 s  #...........................    4%
+  prefill        81.7 s  ################............   59%
+  decode         49.8 s  ##########..................   36%
+  engine misc     1.9 s  ............................    1%
+SILENT CPU FALLBACK. Prefill: 263 s per 2500 tokens.
+WHY: forced by flag: --device none -ngl 0
+-- picchio v1.0.0 mp1 on Intel(R) Xeon(R) CPU @ 2.00GHz + Tesla T4 x2, 31 GB, Linux 6.12.90+

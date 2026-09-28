@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "env",
+    "PYTHONPATH=/tmp/picchio-fresh-linux/fixed-nonce",
+    "/usr/bin/python3",
+    "/tmp/picchio-fresh-linux/picchio.pyz",
+    "/tmp/picchio-fresh-linux/Qwen3.5-9B-Q4_K_M.gguf",
+    "--bin",
+    "/tmp/picchio-fresh-linux/llama-completion-wrapper",
+    "--passes",
+    "3",
+    "--keep-logs",
+    "/kaggle/working/picchio-fresh-linux-evidence/cpu",
+    "--",
+    "--device",
+    "none",
+    "-ngl",
+    "0"
+  ],
+  "start_utc": "2026-09-28T13:08:28.382263+00:00",
+  "timeout_s": 900,
+  "returncode": 4,
+  "wall_s": 418.659845059,
+  "end_utc": "2026-09-28T13:15:27.042157+00:00"
+}

@@ -1,0 +1,16 @@
+model    Qwen3.5-9B Q4_K_M, 8.95 B, 5.28 GiB, llama.cpp b0.5.0-dev
+gpu      ENGAGED: 33/33 layers on GPU (CUDA: Tesla T4) [-ngl 99]
+os       gpu idle 0%, work 53%, mem +5.9 GiB, 135 W, 3.45 J/tok
+settings temp 0.8, top-k 40, top-p 0.95, min-p 0.05, seed 7
+ctx 4096         prefill         decode      wallclock
+  cold       846.8 tok/s     40.1 tok/s     15.0 tok/s
+  warm mid   833.7 tok/s     40.1 tok/s     15.6 tok/s
+  warm span      818~849      40.1~40.2      15.6~15.6
+where the cold pass went (8.5 s, 2/4 threads, weights cached)
+  load weights    2.2 s  #######.....................   26%
+  prefill         0.9 s  ###.........................   11%
+  decode          3.2 s  ##########..................   37%
+  engine misc     2.2 s  #######.....................   26%
+HEALTHY. The GPU did the work. Quote the warm median decode:
+  40.1 tok/s. 834 tok/s is prefill: reading speed, not writing.
+-- picchio v1.0.0 mp1 on Intel(R) Xeon(R) CPU @ 2.00GHz + Tesla T4 x2, 31 GB, Linux 6.12.90+

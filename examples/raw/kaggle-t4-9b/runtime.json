@@ -1,0 +1,10 @@
+{
+  "libc6_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb",
+  "libc6_sha256": "ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be",
+  "libstdc++6_url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gcc-14/libstdc++6_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+  "libstdc++6_sha256": "a51f8de7829211db961a31f02158058ad1a95f92ac6d0a5dff6350e2821c54c0",
+  "loader": "/tmp/picchio-fresh-linux/noble-runtime/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+  "library_path": "/tmp/picchio-fresh-linux/driver:/usr/local/nvidia/lib64:/tmp/picchio-fresh-linux/noble-runtime/usr/lib/x86_64-linux-gnu:/tmp/picchio-fresh-linux/llama-b11228:/usr/local/cuda/targets/x86_64-linux/lib:/usr/lib/x86_64-linux-gnu",
+  "binary": "/tmp/picchio-fresh-linux/llama-b11228/llama-completion",
+  "wrapper": "/tmp/picchio-fresh-linux/llama-completion-wrapper"
+}

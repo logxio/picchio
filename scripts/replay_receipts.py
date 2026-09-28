@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recalculate the public Apple M5 receipts from their captured inputs."""
+"""Recalculate public M5 and Linux 27B receipts from captured inputs."""
 
 import argparse
 import json
@@ -109,6 +109,7 @@ def replay(name):
     return {"name": name, "block": block, "passes": passes,
             "metas": metas, "tele": tele, "state": state,
             "model_path": model_paths[0],
+            "marks": raw["marks"],
             "sources": [str((raw_dir / "pass2.meta.json").relative_to(ROOT)),
                         source_line(raw_dir / "pass2.stderr.txt",
                                     "offloaded "),
@@ -150,6 +151,51 @@ def check_pair(gpu, cpu):
             "M5 layer contrast is not 33/33 versus 0/33")
 
 
+def check_linux_27b(run):
+    block, passes, metas, marks = (run["block"], run["passes"],
+                                   run["metas"], run["marks"])
+    require(block["chip"].endswith("GeForce RTX 5090")
+            and block["os"].startswith("Linux ")
+            and block["model"] == "Qwen3.8-27B Q4_K_M"
+            and block["engine"] == "llama.cpp b0.2.0-dev"
+            and block["ctx"] == 4096,
+            "{}: published Linux 27B identity or context differs".format(
+                run["receipt"]))
+    require(run["model_path"] == "Qwen3.8-27B-UD-Q4_K_M.gguf"
+            and all(p["offload_n"] == p["offload_total"] == 66
+                    and p["gpu_device"] == "GeForce RTX 5090"
+                    for p in passes),
+            "examples/raw/linux-5090-27b/pass*.stderr.txt: CUDA model or "
+            "layer placement differs")
+    for number, (parsed, meta, mark) in enumerate(
+            zip(passes, metas, marks), 1):
+        stderr_path = ROOT / "examples" / "raw" / "linux-5090-27b" / \
+            "pass{}.stderr.txt".format(number)
+        stderr = stderr_path.read_text(encoding="utf-8")
+        require(re.search(r"I llama_context: n_ctx\s+=\s+4096\b", stderr),
+                "{}: context differs from 4096".format(stderr_path))
+        for field in ("prompt_tokens", "eval_tokens", "threads", "cores",
+                      "model_params", "model_size", "sampling"):
+            require(parsed[field] == passes[0][field],
+                    "examples/raw/linux-5090-27b/pass{}.stderr.txt: "
+                    "{} differs across passes".format(number, field))
+        for mark_field, expected in (("wall_s", meta["wall_s"]),
+                                     ("load_s", parsed["load_ms"] / 1000),
+                                     ("prompt_s", parsed["prompt_ms"] / 1000),
+                                     ("eval_s", parsed["eval_ms"] / 1000)):
+            require(abs(mark[mark_field] - expected) < 0.00001,
+                    "examples/raw/linux-5090-27b/telemetry.json: pass {} "
+                    "{} disagrees with meta/stderr".format(
+                        number, mark_field))
+    require(block["threads"] == "8/16"
+            and block["settings"] ==
+            "temp 1.0, top-k 20, top-p 0.95, min-p 0.05, seed 7"
+            and block["rates"][1] == 81.5
+            and run["tele"]["work_med"] == 92,
+            "{}: 27B settings, decode or GPU work differ".format(
+                run["receipt"]))
+
+
 def check_27b():
     path = ROOT / "examples" / "windows-4070s-27b.txt"
     text = path.read_text(encoding="utf-8")
@@ -170,7 +216,7 @@ def check_27b():
 
 def main():
     argparse.ArgumentParser(
-        description="Recalculate bundled M5 receipts without GPU or model"
+        description="Recalculate bundled M5 and Linux 27B receipts without GPU or model"
     ).parse_args()
     try:
         gpu = replay("healthy-metal")
@@ -194,6 +240,34 @@ def main():
         print("  boundary: shared machine and file bytes have no "
               "independent fingerprint; OS GPU samples cover the whole "
               "GPU, and the runs differ in placement flags")
+        linux = replay("linux-5090-27b")
+        check_linux_27b(linux)
+        print("PASS {}: {} ({}); warm prefill / decode / wall "
+              "{:.1f} / {:.1f} / {:.1f} tok/s; GPU work {:.0f}%".format(
+                  linux["receipt"], linux["state"],
+                  linux["block"]["place"], *linux["block"]["rates"],
+                  linux["tele"]["work_med"]))
+        print("  NVML idle / work: {:.0f}% / {:.0f}%; memory +{:.1f} GiB; "
+              "work {:.0f} W; decode {:.2f} J/token".format(
+                  linux["tele"]["idle_med"],
+                  linux["tele"]["work_med"],
+                  linux["tele"]["mem_step"] / 1024 ** 3,
+                  linux["tele"]["work_w"],
+                  linux["tele"]["dec_w"] / linux["block"]["rates"][1]))
+        linux_dir = ROOT / "examples" / "raw" / "linux-5090-27b"
+        print("  sources: " + "; ".join(
+            str((linux_dir / "pass{}.meta.json".format(n)).relative_to(ROOT))
+            for n in (1, 2, 3)))
+        print("  placement: " + "; ".join(
+            source_line(linux_dir / "pass{}.stderr.txt".format(n),
+                        "offloaded ") for n in (1, 2, 3)))
+        print("  timing: " + "; ".join(
+            source_line(linux_dir / "pass{}.stderr.txt".format(n), needle)
+            for n in (2, 3)
+            for needle in ("prompt eval time =", "eval time =")))
+        print("  GPU samples: " + linux["sources"][-1])
+        print("  boundary: one recorded Linux CUDA machine; OS GPU samples "
+              "cover the whole GPU, not just the model process")
         path, total, on_gpu, on_cpu, decode = check_27b()
         print("PASS {}: {} - {} = {} CPU layers; warm decode "
               "{:.1f} tok/s (receipt arithmetic only; no public "

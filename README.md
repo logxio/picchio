@@ -18,6 +18,16 @@
 
 </div>
 
+Check the recorded Apple M5 GPU and forced-CPU runs without a GPU or model download:
+
+```sh
+python3 scripts/replay_receipts.py
+```
+
+It recalculates layer placement, prefill, decode and GPU readings from the
+[captured inputs](examples/raw/) and checks both published receipts. A mismatch
+points to the affected file or receipt line, then exits nonzero.
+
 ## Run it
 
 ```sh
@@ -127,7 +137,7 @@ The [llama-bench documentation](https://github.com/ggml-org/llama.cpp/blob/maste
 | Picchio's time-aligned macOS GPU samples from those same passes | [GPU run](examples/healthy-metal.txt): 99% work, +6.0 GiB, 11.0 W, 0.52 J/token; [forced CPU run](examples/cpu-fallback.txt): 5% work, +0.3 GiB, 0.1 W, 0.01 J/token | OS-side activity, memory and energy alongside the engine report; these are whole-GPU readings, not per-process attribution or total-system energy. |
 | Picchio's combined result | `HEALTHY` versus `SILENT CPU FALLBACK`, with `--device none -ngl 0` identified in the CPU run | A diagnosis for each recorded run. The different placement and rates come from the GPU settings, not from Picchio accelerating inference. |
 
-These are two runs of the same model on one machine. No `llama-bench` throughput number is mixed into this comparison.
+The two receipts report one Apple M5, the same model path, engine build, context and sampling settings; the forced-CPU run changes `--device none -ngl 0`. The raw files contain no independent machine or model-byte fingerprint, and the OS samples measure the whole GPU. No `llama-bench` throughput number is mixed into this comparison. The [4070 SUPER 27B receipt](examples/windows-4070s-27b.txt) can be checked for its own arithmetic (`66 − 38 = 28` CPU layers); its raw layer and timing logs are not public, so the replay command does not independently reproduce its measurements.
 
 ## Send me your machine
 

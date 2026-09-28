@@ -196,8 +196,8 @@ def main():
               "GPU, and the runs differ in placement flags")
         path, total, on_gpu, on_cpu, decode = check_27b()
         print("PASS {}: {} - {} = {} CPU layers; warm decode "
-              "{:.1f} tok/s (receipt arithmetic only; no public 27B raw "
-              "logs to replay)".format(
+              "{:.1f} tok/s (receipt arithmetic only; no public "
+              "4070 SUPER 27B raw logs to replay)".format(
                   path, total, on_gpu, on_cpu, decode))
         return 0
     except (ReplayError, OSError, KeyError, ValueError, TypeError) as exc:

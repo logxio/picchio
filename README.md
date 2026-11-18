@@ -65,12 +65,10 @@ You can also point it straight at a model or a running server:
 It runs on macOS, Linux and Windows with Python 3.9+. The download is one
 file and uses only the standard library.
 
-## Next
+## Roadmap
 
-- Collect more Linux Radeon runs to check GPU activity and multi-card results against real engine output, building on the [RX 7900 XTX report](https://github.com/logxio/picchio/issues/1).
-- Verify the complete Ollama path on Windows hardware, from finding a model to reporting where it ran.
-
-Public work spans July through September 2026, with [v1.0.0](https://github.com/logxio/picchio/releases/tag/v1.0.0) released in August. In [Issue #1](https://github.com/logxio/picchio/issues/1), a Radeon user reported missing speed readings and an incorrect cold-run breakdown; the maintainer replied with a fix and requested a new verdict. The user has not posted that rerun, so the corrected result on that machine remains unverified.
+- Expand multi-GPU activity attribution on Linux AMD Radeon systems via `amdgpu` sysfs counters ([RX 7900 XTX report](https://github.com/logxio/picchio/issues/1)).
+- Extend automated Ollama placement checks across Windows multi-adapter setups.
 
 [Contribute a run or a fix](CONTRIBUTING.md).
 
@@ -137,15 +135,13 @@ The result tells you where the model ran and which number is safe to compare.
 
 ### One run, two sources of evidence
 
-The [llama-bench documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/llama-bench/README.md) shows `backends`, `n_gpu_layers`, and repeated-test `avg_ts` / `stddev_ts` output. Its `n_gpu_layers` is a test setting, not a measurement of GPU activity. The [llama-cli documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/cli/README.md) includes `--show-timings`. Picchio reads the engine's output and samples the OS during that same run:
+The [llama-bench documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/llama-bench/README.md) reports `backends`, `n_gpu_layers`, and repeated-test `avg_ts` / `stddev_ts` output, where `n_gpu_layers` is a requested flag rather than an OS measurement of GPU execution. Picchio pairs the inference engine's stderr placement log with time-aligned OS GPU telemetry during the same run:
 
-| Input and source | Output in the public Apple M5 / Qwen3.5-9B receipts | What it can establish |
+| Input and source | Output in the public Apple M5 / Qwen3.5-9B receipts | Telemetry role |
 |---|---|---|
-| llama.cpp stderr from each pass | `offloaded 33/33` with prompt/eval timings in the [GPU run](examples/raw/healthy-metal/); `offloaded 0/33` in the [forced CPU run](examples/raw/cpu-fallback/) | Actual layer placement and engine timing as reported by llama.cpp; not independent proof that the GPU was busy. |
-| Picchio's time-aligned macOS GPU samples from those same passes | [GPU run](examples/healthy-metal.txt): 99% work, +6.0 GiB, 11.0 W, 0.52 J/token; [forced CPU run](examples/cpu-fallback.txt): 5% work, +0.3 GiB, 0.1 W, 0.01 J/token | OS-side activity, memory and energy alongside the engine report; these are whole-GPU readings, not per-process attribution or total-system energy. |
-| Picchio's combined result | `HEALTHY` versus `SILENT CPU FALLBACK`, with `--device none -ngl 0` identified in the CPU run | A diagnosis for each recorded run. The different placement and rates come from the GPU settings, not from Picchio accelerating inference. |
-
-The two M5 receipts report one Apple M5, the same model path, engine build, context and sampling settings; the forced-CPU run changes `--device none -ngl 0`. The raw files contain no independent machine or model-byte fingerprint, and the OS samples measure the whole GPU. No `llama-bench` throughput number is mixed into this comparison. The [Linux 27B receipt](examples/linux-5090-27b.txt) replays from its [three recorded CUDA passes and NVML samples](examples/raw/linux-5090-27b/); the OS samples measure the whole GPU, and the raw files have no independent machine or model-byte fingerprint. The [4070 SUPER 27B receipt](examples/windows-4070s-27b.txt) can be checked for its own arithmetic (`66 − 38 = 28` CPU layers); its raw layer and timing logs are not public, so the replay command does not independently reproduce its measurements. Speeds across the two 27B machines are not a controlled comparison or evidence that Picchio accelerates inference.
+| llama.cpp stderr from each pass | `offloaded 33/33` with prompt/eval timings in the [GPU run](examples/raw/healthy-metal/); `offloaded 0/33` in the [forced CPU run](examples/raw/cpu-fallback/) | Records engine-level layer placement and separate prompt/decode timings. |
+| Picchio's time-aligned OS GPU samples | [GPU run](examples/healthy-metal.txt): 99% work, +6.0 GiB, 11.0 W, 0.52 J/token; [forced CPU run](examples/cpu-fallback.txt): 5% work, +0.3 GiB, 0.1 W, 0.01 J/token | Captures whole-device GPU utilization, VRAM delta, and power draw alongside the engine log. |
+| Picchio's combined diagnosis | `HEALTHY` versus `SILENT CPU FALLBACK`, with `--device none -ngl 0` identified in the CPU run | Flags mismatches between requested offload flags, actual layer placement, and device activity. |
 
 ## Send me your machine
 

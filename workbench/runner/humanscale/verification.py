@@ -116,6 +116,9 @@ def live_boundary(root):
     if sys.platform == 'darwin':
         policy = profile(workspace, workspace / 'unused.gguf', Path(__file__).parent.parent, 19193)
         policy += '(allow process-exec (literal ' + json.dumps(str(Path(sys.executable).resolve())) + '))\n'
+        framework = Path(sys.base_prefix) / 'Resources/Python.app/Contents/MacOS/Python'
+        if framework.is_file():
+            policy += '(allow process-exec (literal ' + json.dumps(str(framework.resolve())) + '))\n'
         command = ['/usr/bin/sandbox-exec', '-p', policy, *command]
     elif sys.platform != 'linux':
         return {'state': 'UNAVAILABLE', 'detail': 'Captured Seatbelt receipts verified on this host',

@@ -382,7 +382,6 @@ $('receiptFile').onchange = async e => {
   } catch (err) { $('status').textContent = err.message; }
 };
 function setPalette(k) {
-  k = 0;
   Object.assign(C, PALETTES[k]);
   const root = document.documentElement.style;
   root.setProperty('--paper', C.paper);
@@ -406,7 +405,8 @@ if (runs.length) render(); else $('status').textContent = 'Receipt data is unava
 window.workbenchRecompute = recompute;
 window.workbenchSelect = select;
 window.workbenchSetPalette = setPalette;
-setPalette(0);
+const initialPalette = Number(new URLSearchParams(location.search).get('palette') || 0);
+if (Number.isInteger(initialPalette) && initialPalette >= 0 && initialPalette < PALETTES.length) setPalette(initialPalette);
 addEventListener('message', event => {
   if (event.source === parent && event.data?.type === 'workbenchPalette' && Number.isInteger(event.data.palette)
     && event.data.palette >= 0 && event.data.palette < PALETTES.length) setPalette(event.data.palette);

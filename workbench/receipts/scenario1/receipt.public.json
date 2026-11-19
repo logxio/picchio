@@ -161,7 +161,7 @@
     "prompt_sha256": "e39c81f94f8925a820e06e6be720f78f6e5e7bcc8e0b59ac8d03e139a4141bc6"
   },
   "boundary": {
-    "policy_sha256": "7a25fcfaaa67dbd85b192f7c8e9dc8b98ec196baf946c45c0157f2edcd6f6b06",
+    "policy_sha256": "ad5e6038071759f3338ed1e1c3d1ffbb9e28da5df0f1a6c61f501df9aee6ab66",
     "inheritance": "agent to model and tool descendants",
     "network": "Only the selected IPv4 loopback inference port",
     "probe_event": {
@@ -328,12 +328,12 @@
     "rules_sha256": "a53d464a3e1fff4efe2f116b47ea2165678d653f6dfb4e1418d767bf15ce0c51"
   },
   "artifacts": {
-    "config.json": "b1516cdceb04fcd79b849dafdeb0fec8ac66aab4d8ff37ea6caf0ccd45ef1f19",
-    "policy.sb": "7a25fcfaaa67dbd85b192f7c8e9dc8b98ec196baf946c45c0157f2edcd6f6b06",
-    "engine.stderr.txt": "35291b2434d5c3c20127fd160b9e4d1c17ad8b988e61f1344781f795433783cb",
+    "config.json": "0bd1971b8542ace498fa34c6e7a56c1bb5e8cc8e1434a935e803cea1323a3ded",
+    "policy.sb": "ad5e6038071759f3338ed1e1c3d1ffbb9e28da5df0f1a6c61f501df9aee6ab66",
+    "engine.stderr.txt": "a8b2afebe551f4cccf7c90ad0e16690854a4bce405a221de23c1fc48815051c8",
     "os_samples.json": "0825296aa8242c914cd6e1c99dea9a9daadabe192f950d16afac171b5923b4ce",
     "process_tree.json": "4a9f43af2624d1335e838b71dabc7484de28a2dfe538dfd2b163162554978b54",
-    "events.jsonl": "af196d075df17d1ab4454b12f9f6d1e399ce5e9cbc54c5e17a7a471afc80b850",
+    "events.jsonl": "0533a02716c260f14e15a06c0f06e94781844e635a39398bf9e1d286ee2dec38",
     "outside_sensitive_fixture.txt": "816d0dd27ae16011d3c72f679cf6617841173625ba2d59c59ba273cd8c5e3e2f"
   },
   "five_probe_checks": {
@@ -398,7 +398,7 @@
   },
   "export": {
     "sanitized": true,
-    "raw_receipt_sha256": "4d6c2e7a44821a1a55db245e4c2e0cbbd5ef219ef9516a53ebc05822220e5b72",
+    "raw_receipt_sha256": "51b5f9ffd51730e1ca31538072f9e53e35e314ede21f55015e01799e4e5ecce7",
     "recording_path": "receipts/scenario1"
   }
 }

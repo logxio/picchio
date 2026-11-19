@@ -1,7 +1,7 @@
 {
   "scenario": 2,
-  "model": "/Users/suapril/Code/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-  "workspace": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario2/workspace",
+  "model": "/workspace/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+  "workspace": "/workspace/mozilla-humanscale/workbench/receipts/scenario2/workspace",
   "engine": "/opt/homebrew/bin/llama-server",
   "port": 51623,
   "nonces": [
@@ -9,7 +9,7 @@
     "MIDDLE_74978baaad",
     "TAIL_9684003344"
   ],
-  "probe": "/Users/suapril/Code/mozilla-humanscale/workbench/runner/humanscale/probe.py",
-  "sentinel": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario2/outside_sensitive_fixture.txt",
-  "protected": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario2/protected/test_original.py"
+  "probe": "/workspace/mozilla-humanscale/workbench/runner/humanscale/probe.py",
+  "sentinel": "/workspace/mozilla-humanscale/workbench/receipts/scenario2/outside_sensitive_fixture.txt",
+  "protected": "/workspace/mozilla-humanscale/workbench/receipts/scenario2/protected/test_original.py"
 }

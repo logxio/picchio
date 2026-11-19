@@ -1,4 +1,4 @@
-"""Five assay probe families retain missing evidence as UNKNOWN."""
+"""Five probe_checks probe families retain missing evidence as UNKNOWN."""
 from .vendor.probe_checks import thinking_cap, constraint_enabled
 
 

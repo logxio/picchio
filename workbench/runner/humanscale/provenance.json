@@ -6,19 +6,19 @@
     "adaptation": "Typography normalization only"
   },
   {
-    "source": "laurel/release/supplement/gradertouch/rules.py",
+    "source": "frozen_replay/release/supplement/gradertouch/rules.py",
     "sha256": "125bb59c75609a4ca2e38f021164a3c5710328db6981e1da91b7a3c3f6432144",
     "vendored_sha256": "a53d464a3e1fff4efe2f116b47ea2165678d653f6dfb4e1418d767bf15ce0c51",
     "adaptation": "Typography normalization only"
   },
   {
-    "source": "assay/runner/hardware.py",
+    "source": "probe_checks/runner/hardware.py",
     "sha256": "3fa36ba7fc50c5b7cc50bd6dc39451e9d045c4c4239d308e1b0acd618eea452d",
     "vendored_sha256": "3fa36ba7fc50c5b7cc50bd6dc39451e9d045c4c4239d308e1b0acd618eea452d",
     "adaptation": "Typography normalization only"
   },
   {
-    "source": "assay/tasks/probe_checks.py",
+    "source": "probe_checks/tasks/probe_checks.py",
     "sha256": "ea9aea4651eca2f9db1bad6055874542707c4a5dc35077ba15136b1848f98708",
     "vendored_sha256": "ea9aea4651eca2f9db1bad6055874542707c4a5dc35077ba15136b1848f98708",
     "adaptation": "Helper functions reused for five probe states"

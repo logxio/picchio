@@ -386,7 +386,7 @@
     "prompt_sha256": "eee503e11e54bf3ca550d7a01901362ea94e10bf249f705e396d7694414720a8"
   },
   "boundary": {
-    "policy_sha256": "44635181e6a96a423733950bcc51866b87ed87f34717f8ba1dcf1151a6109c36",
+    "policy_sha256": "e540a6a062936ae2d3047488529068631e23a0929768b3a1c44434fef1ee2f76",
     "inheritance": "agent to model and tool descendants",
     "network": "Only the selected IPv4 loopback inference port",
     "probe_event": {
@@ -553,12 +553,12 @@
     "rules_sha256": "a53d464a3e1fff4efe2f116b47ea2165678d653f6dfb4e1418d767bf15ce0c51"
   },
   "artifacts": {
-    "config.json": "b1827e28225e1a4fee2f37e4db3ceddb561fe7bfbbd363a05f5bcbf832b856af",
-    "policy.sb": "44635181e6a96a423733950bcc51866b87ed87f34717f8ba1dcf1151a6109c36",
-    "engine.stderr.txt": "ca10c9626824584cb74dd0eab85c2aafbcc58433fe8453bfd4a38e8b890ae930",
+    "config.json": "4edd77d8466bdb959b5b048fd947ce74d56705ee181fa413d9da2d23a84e3fdd",
+    "policy.sb": "e540a6a062936ae2d3047488529068631e23a0929768b3a1c44434fef1ee2f76",
+    "engine.stderr.txt": "d83114c90aa793f55ddd9dc2d64420d88c9352be73e0c32d8d7a00f6cfb1e39a",
     "os_samples.json": "3edeabe6e900ff1f7cb1dd6d9b740fb793b1d6189c1436149b98a144e100159b",
     "process_tree.json": "b3aae5897dcc8f83fd57399b57f8d110a0853f63fb42441ffc65bc03e6b4c6f7",
-    "events.jsonl": "18fa310791e934351945333715aa7d2a107ab009a13d0cf90e12bb8e0fffc3f5",
+    "events.jsonl": "518e9881d3963f8651ee33f173635b34e268be9fea8ff85103d7517764947ace",
     "outside_sensitive_fixture.txt": "816d0dd27ae16011d3c72f679cf6617841173625ba2d59c59ba273cd8c5e3e2f"
   },
   "five_probe_checks": {
@@ -623,7 +623,7 @@
   },
   "export": {
     "sanitized": true,
-    "raw_receipt_sha256": "1d3b7840c122a59bd8da78dc1eda201c1b38ade183d8eee3c526c39a833e1736",
+    "raw_receipt_sha256": "e3ddf4689b7bc672ec71d47a90ddfd448079f026d033165b351ce3295921c10b",
     "recording_path": "receipts/scenario2"
   }
 }

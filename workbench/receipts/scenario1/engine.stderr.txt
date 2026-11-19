@@ -11,11 +11,11 @@
 0.07.720.274 I srv          init: Use --ui/--no-ui (or deprecated --webui/--no-webui) to enable/disable
 0.07.721.353 I srv         start: binding port with default address family
 0.07.723.320 I srv  llama_server: loading model
-0.07.723.360 I srv    load_model: loading model '/Users/suapril/Code/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'
+0.07.723.360 I srv    load_model: loading model '/workspace/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf'
 0.07.724.332 I common_init_result: fitting params to device memory ...
 0.07.724.334 I common_init_result: (for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on)
 0.07.724.465 I common_params_fit_impl: getting device memory data for initial parameters:
-0.07.750.506 I llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from /Users/suapril/Code/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf (version GGUF V3 (latest))
+0.07.750.506 I llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from /workspace/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf (version GGUF V3 (latest))
 0.07.750.517 I llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 0.07.750.519 I llama_model_loader: - kv   0:                       general.architecture str              = qwen2
 0.07.750.519 I llama_model_loader: - kv   1:                               general.type str              = model
@@ -597,7 +597,7 @@
 0.07.887.542 I common_params_fit_impl: will leave 24492 >= 1024 MiB of free device memory, no changes needed
 0.07.887.542 I common_fit_params: successfully fit params to free device memory
 0.07.887.726 I common_fit_params: fitting params to free memory took 0.16 seconds
-0.07.907.538 I llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from /Users/suapril/Code/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf (version GGUF V3 (latest))
+0.07.907.538 I llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from /workspace/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf (version GGUF V3 (latest))
 0.07.907.546 I llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
 0.07.907.548 I llama_model_loader: - kv   0:                       general.architecture str              = qwen2
 0.07.907.548 I llama_model_loader: - kv   1:                               general.type str              = model

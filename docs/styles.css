@@ -1,0 +1,52 @@
+:root{color-scheme:light;--paper:#FAF7F2;--canvas:#FFFFFF;--rule:#141413;--ink:#141413;--quiet:#66615B;--hair:#E5DFD5;--gpu:#2B6CB0;--alarm:#B45309;--pass:#1B365D;--serif:"Iowan Old Style","Charter",Georgia,serif;--sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--paper);color:var(--ink);font:13px/1.4 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+button,input,code{font:inherit}
+button,.mast nav a,.file{cursor:pointer;background:var(--canvas);color:var(--ink);border:1px solid var(--rule);padding:4px 10px;font-size:12px;text-decoration:none;border-radius:0}
+button:hover,.mast nav a:hover,.file:hover,button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+:focus-visible{outline:2px solid var(--gpu);outline-offset:2px}
+.mast{display:flex;align-items:center;gap:24px;padding:10px 28px;border-bottom:1px solid var(--rule)}
+.brand{font:600 15px var(--sans);letter-spacing:-.2px;text-decoration:none;white-space:nowrap}
+.brand b{font-weight:400;color:var(--quiet)}
+.meta{margin:0;font:11px var(--mono);color:var(--quiet);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mast nav{display:flex;gap:6px}
+main{max-width:1440px;margin:0 auto;padding:0 28px 10px}
+h1{font:600 30px/1.1 var(--serif);letter-spacing:-.6px;margin:12px 0 10px}
+.fig{margin:0;background:var(--canvas);border-top:1px solid var(--rule)}
+figcaption{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.6px;padding:6px 0 0 0;display:flex;gap:10px;align-items:baseline}
+figcaption b{font:700 13px var(--serif);color:var(--ink)}
+.fig svg{display:block;width:100%;height:auto;overflow:visible}
+.split{display:grid;grid-template-columns:minmax(0,1.38fr) minmax(0,1fr);gap:28px;margin-top:12px}
+svg text{font-family:var(--sans)}
+svg .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+svg .q{fill:var(--quiet)}
+svg .hdr{cursor:pointer}
+svg .hdr:focus{outline:none}
+svg .hdr:focus-visible rect.hit{stroke:var(--gpu);stroke-width:2}
+svg .col,svg .strand,svg .flow{transition:opacity .15s}
+svg .dim{opacity:.18}
+svg .row:hover rect.band{fill:#F3F0EA}
+.runbar{max-width:1440px;margin:0 auto;display:flex;align-items:center;gap:10px;padding:8px 28px;border-top:1px solid var(--rule);background:var(--paper);font-size:12px}
+.runbar label{font-weight:600;white-space:nowrap}
+.runbar code{font:11px var(--mono);background:var(--canvas);border:1px solid var(--hair);padding:4px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.file{font-weight:400!important}
+.file input{position:absolute;width:1px;height:1px;opacity:0}
+#status{font:11px var(--mono);color:var(--quiet);white-space:nowrap}
+.runbar>a{white-space:nowrap}
+.guide{max-width:760px;padding:28px}
+.guide pre{background:var(--canvas);border:1px solid var(--hair);padding:10px;font:12px var(--mono);overflow:auto}
+@media(max-width:1100px){.split{grid-template-columns:1fr}.meta{display:none}}
+
+[hidden]{display:none!important}
+.tourplayer{max-width:1384px;margin:12px auto;display:flex;gap:20px;padding:12px;border:1px solid var(--hair);background:var(--canvas)}
+.tourplayer video{display:block;width:320px;max-width:100%;aspect-ratio:4/3;background:#141413;object-fit:contain}
+.tourcontrols{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:16px}
+.touractions{display:flex;align-items:center;gap:16px}
+.touractions output{font:12px var(--mono);flex:1}
+.tourchapters{display:flex;flex-wrap:wrap;gap:8px}
+body[data-tour-focus="matrix"] #figC{outline:2px solid var(--gpu);outline-offset:5px}
+body[data-capture="true"] .mast,body[data-capture="true"] .runbar{pointer-events:none}
+#captureCaption{position:fixed;bottom:0;left:0;right:0;height:140px;display:flex;align-items:center;justify-content:center;padding:20px 100px;background:#141413;color:#FAF7F2;font:24px/1.4 var(--sans);text-align:center;border-top:3px solid #B45309}
+body[data-capture="true"]{padding-bottom:140px}
+@media(max-width:750px){.mast{flex-wrap:wrap;padding:10px 16px;gap:10px}.mast nav{flex-wrap:wrap}.tourplayer{margin:12px;flex-direction:column}.tourplayer video{width:100%}.touractions{gap:8px}.runbar{flex-wrap:wrap}main{padding:0 16px 10px}}

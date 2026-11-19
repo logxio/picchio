@@ -10,9 +10,9 @@
 <img src="https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab" alt="python 3.9+, stdlib only">
 </p>
 
-<p><a href="#run-it">Run it</a> · <a href="https://logxio.github.io/picchio/">Browse results</a> · <a href="#send-me-your-machine">Add your machine</a></p>
+<p><a href="#run-it">Run it</a> · <a href="https://yansu.me/picchio/">Interactive Workbench</a> · <a href="https://logxio.github.io/picchio/#tour">2-Min Walkthrough Tour</a> · <a href="https://logxio.github.io/picchio/hardware-results.html">Cross-GPU Matrix</a> · <a href="#send-me-your-machine">Add your machine</a></p>
 
-<p>An inference placement receipt joins the engine's layer placement, the system's GPU readings and the run's separate speed measurements. It shows where a local model actually ran when a single tok/s number cannot. A 27B model still answered at 5.7 tok/s, but its <a href="examples/windows-4070s-27b.txt">recorded receipt</a> showed 28 of 66 layers on the CPU and a memory-fit cause. <a href="examples/contest-demo-v3.mp4">Watch the demo</a>.</p>
+<p>An inference placement and sandbox boundary receipt joins the engine's layer placement (Metal, CUDA, ROCm, or CPU fallback), OS GPU power/busy sampling, context-truncation nonce verification, inherited OS Seatbelt kernel boundary probes (5/5 in-flight file and network escape probes blocked with 0 B leaked), and frozen base-test plus read-only SQLite state verification. It shows where a local model actually ran and whether its task claim is genuine when a single tok/s number or green workspace test cannot. A 27B model still answered at 5.7 tok/s, but its <a href="examples/windows-4070s-27b.txt">recorded receipt</a> showed 28 of 66 layers on the CPU and a memory-fit cause; on Apple M5, our <a href="https://yansu.me/picchio/">4-run interactive workbench</a> recomputes native Metal repair (673.5 tok/s prefill, 86.1 tok/s decode), silent CPU fallback and middle-context nonce loss (81.8 tok/s prefill, 3,620 ms TTFT), in-flight kernel boundary blocking (5/5 EPERM), and fake-green test tampering detection (SQLite 13 vs 42) in 24 ms in the browser.</p>
 
 <img src="assets/picchio-demo.svg" width="680" alt="Recorded Qwen3.8-27B run: 38 of 66 layers on GPU, 28 on CPU, 5.7 tok/s warm decode">
 

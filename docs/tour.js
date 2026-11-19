@@ -20,7 +20,7 @@
       [...buttons.children].forEach((b, i) => b.setAttribute('aria-pressed', String(data.chapters[i] === chapter)));
       lastChapter = chapter;
     }
-    clock.value = `${stamp(time)} / 01:45`;
+    clock.value = `${stamp(time)} / ${stamp(data.duration)}`;
     if (recording) {
       caption.hidden = false;
       caption.textContent = data.captions.find(c => c.start <= time && time < c.end)?.text || '';

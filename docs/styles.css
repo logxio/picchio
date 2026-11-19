@@ -40,7 +40,7 @@ svg .row:hover rect.band{fill:#F3F0EA}
 
 [hidden]{display:none!important}
 .tourplayer{max-width:1384px;margin:12px auto;display:flex;gap:20px;padding:12px;border:1px solid var(--hair);background:var(--canvas)}
-.tourplayer video{display:block;width:320px;max-width:100%;aspect-ratio:4/3;background:#141413;object-fit:contain}
+.tourplayer video{display:block;width:320px;max-width:100%;aspect-ratio:16/9;background:#141413;object-fit:contain}
 .tourcontrols{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:16px}
 .touractions{display:flex;align-items:center;gap:16px}
 .touractions output{font:12px var(--mono);flex:1}

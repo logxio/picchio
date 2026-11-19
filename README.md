@@ -1,7 +1,7 @@
 # <img src="assets/picchio-mark-a.svg" width="28" height="28" align="top" alt="picchio"> picchio
 
 [![selftest](https://github.com/logxio/picchio/actions/workflows/selftest.yml/badge.svg)](https://github.com/logxio/picchio/actions/workflows/selftest.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-2ea44f)](LICENSE)
+[![license: MIT](https://img.shields.io/badge/license-MIT-475569)](LICENSE)
 ![python 3.9+, stdlib only](https://img.shields.io/badge/python-3.9%2B%2C%20stdlib%20only-3776ab)
 
 [Run it](#run-it) · [Recorded receipts](#recorded-receipts) · [Interactive Workbench](https://yansu.me/picchio/) · [2-Min Walkthrough Tour](https://logxio.github.io/picchio/#tour) · [Cross-GPU Matrix](https://logxio.github.io/picchio/hardware-results.html) · [Add your machine](#send-me-your-machine)

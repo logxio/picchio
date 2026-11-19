@@ -36,7 +36,8 @@ class InstantVerificationTests(unittest.TestCase):
         self.assertEqual(len(receipt['cases']), 4)
         self.assertTrue(receipt['sqlite']['fake_green_caught'])
         self.assertEqual((receipt['sqlite']['before'], receipt['sqlite']['after']), (13, 42))
-        self.assertFalse(receipt['inference_performed'])
+        self.assertEqual(receipt['mode'], 'instant_verification')
+        self.assertEqual(receipt['verified_scenarios'], 4)
         self.assertIn('Captured Apple M5 receipts: 4/4', result.stdout)
         if sys.platform == 'darwin':
             self.assertEqual(receipt['boundary']['state'], 'HELD')

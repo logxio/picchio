@@ -1,0 +1,201 @@
+{
+  "schema": "humanscale.audit.v1",
+  "title": "Local AI Boundary Matrix (14 Tools) and Pull Request Assertion Weakening Audit Summary (179,253 PRs)",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Yan Su",
+  "part_1_local_ai_14_tools_boundary_matrix": {
+    "evaluated_dimensions": [
+      "engine_layer_placement_verified",
+      "os_gpu_telemetry_and_power_watts",
+      "context_truncation_nonce_probe",
+      "gpu_compatible_kernel_process_tree_boundary",
+      "frozen_out_of_workspace_acceptance_checks",
+      "independent_readonly_sqlite_state_verification"
+    ],
+    "tools": [
+      {
+        "id": 1,
+        "tool": "llama.cpp (llama_bench / llama_server)",
+        "category": "Local inference engine",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Reports requested n_gpu_layers and token speed in stderr; provides no OS GPU power sampling, no kernel file or socket fence for child agent tools, and no task outcome verification."
+      },
+      {
+        "id": 2,
+        "tool": "llamafile (Mozilla.ai v0.10.6)",
+        "category": "Single file local LLM launcher",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Official docs/security.md and open issue #1017 document that seccomp and pledge sandboxing is skipped whenever GPU acceleration loads or combined server and CLI mode runs."
+      },
+      {
+        "id": 3,
+        "tool": "Ollama",
+        "category": "Local model daemon",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Daemon API reports processor weight split but imposes no kernel workspace fence on calling agents or tool plugins."
+      },
+      {
+        "id": 4,
+        "tool": "LocalScore (cjpais/LocalScore)",
+        "category": "Local hardware benchmark",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": true,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Measures fixed prompt token throughput and device wattage via llamafile; does not sandbox agent tool trees or verify task records."
+      },
+      {
+        "id": 5,
+        "tool": "LM Studio",
+        "category": "Desktop local LLM application",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Local server and MCP tool plugins execute with the desktop user's ambient filesystem and network permissions."
+      },
+      {
+        "id": 6,
+        "tool": "Open WebUI",
+        "category": "Local web interface and tool runner",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Python function and tool plugins execute in the host or container context without per workspace kernel Seatbelt or Landlock isolation."
+      },
+      {
+        "id": 7,
+        "tool": "Jan",
+        "category": "Desktop local assistant",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Bundles local llama.cpp inference with extension tools running under ambient user permissions."
+      },
+      {
+        "id": 8,
+        "tool": "GPT4All",
+        "category": "Desktop local assistant with LocalDocs",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Provides UI folder selection for document indexing without kernel enforcement or external database outcome checks."
+      },
+      {
+        "id": 9,
+        "tool": "AnythingLLM",
+        "category": "Desktop workspace and agent wrapper",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Agent skills and MCP tools inherit the desktop process permissions without kernel file or socket fencing."
+      },
+      {
+        "id": 10,
+        "tool": "Tiles Privacy (tiles.run / Modelfile + Pi agent)",
+        "category": "Consumer local AI agent launcher",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "PR #312 spawns the Pi agent against local llama.cpp port 18080 using PI_OFFLINE, cwd, and setsid without an OS kernel file or socket boundary."
+      },
+      {
+        "id": 11,
+        "tool": "vLLM",
+        "category": "Datacenter serving engine",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Designed for datacenter serving rather than single folder kernel isolation or post run SQLite state verification on consumer laptops."
+      },
+      {
+        "id": 12,
+        "tool": "MLX LM",
+        "category": "Apple Silicon inference library",
+        "engine_layer_placement_verified": true,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Executes unified memory Metal arrays directly in Python without sandboxing tool child processes or checking task outcomes."
+      },
+      {
+        "id": 13,
+        "tool": "Inspect AI (UK AISI)",
+        "category": "Evaluation harness",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": false,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": true,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Supports container sandboxes and external test scorers for benchmark suites, but does not verify local Metal or CUDA layer offload or zero install laptop Seatbelt policies."
+      },
+      {
+        "id": 14,
+        "tool": "CodeCarbon",
+        "category": "Energy and emissions tracker",
+        "engine_layer_placement_verified": false,
+        "os_gpu_telemetry_and_power_watts": true,
+        "context_truncation_nonce_probe": false,
+        "gpu_compatible_kernel_process_tree_boundary": false,
+        "frozen_out_of_workspace_acceptance_checks": false,
+        "independent_readonly_sqlite_state_verification": false,
+        "primary_evidence": "Tracks hardware power draw and carbon intensity when integrated into Python code, without kernel sandboxing or task completion verification."
+      }
+    ]
+  },
+  "part_2_pull_request_assertion_weakening_audit": {
+    "total_single_parent_pull_requests_audited": 179253,
+    "audit_scope": "Empirical AST and diff audit of 179,253 single parent pull requests across public open source repositories comparing coding agent patches and human patches touching test files.",
+    "weakening_operators_tracked": [
+      "assertion_deleted",
+      "skip_or_xfail_decorator_added",
+      "expected_tolerance_widened",
+      "exception_swallowed_in_test"
+    ],
+    "key_findings": {
+      "human_parity_weakening_rate": "Coding agents weakened test assertions at approximately the same rate as human authors across single parent PRs touching tests, demonstrating that green workspace test suites are an insufficient proof of task completion regardless of author.",
+      "frozen_check_necessity": "When test files reside inside the agent's writable workspace, a 1.5B to 9B model can turn the test suite green by deleting or relaxing an assertion while leaving the underlying SQLite database or record in an unfixed state (such as 13 instead of 42).",
+      "design_consequence_in_picchio": "Picchio freezes original acceptance tests outside the writable workspace under root or separate permissions and queries the final SQLite ledger through an independent read only connection with PRAGMA query_only=ON."
+    }
+  }
+}

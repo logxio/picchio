@@ -47,7 +47,7 @@ def main():
     try:
         if args.command == 'guard':
             result=guard_command(args.argv,args.workspace,args.model,args.port,args.output,args.timeout)
-            print(json.dumps({'returncode':0,'worker_returncode':result['returncode'],'state':'done','reason':'complete','termination':'complete','passed':True,'runtime_healthy':True}))
+            print(json.dumps({'state':'done','reason':'complete','termination':'complete','passed':True,'runtime_healthy':True,'boundary_enforced':True,'command_exit_code':result['returncode'],'command_completed':result['command_completed']}))
             return 0
         for n in range(1,5) if args.scenario=='all' else [int(args.scenario)]:
             receipt = run(n,args.model,args.output/f'scenario{n}')

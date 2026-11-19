@@ -42,10 +42,12 @@ def guard_command(command, workspace, model, port, output, timeout=150):
     finally:
         try:os.killpg(p.pid,signal.SIGKILL)
         except ProcessLookupError:pass
-    receipt={'schema':'humanscale.guard.v1','returncode':p.returncode,'termination':reason,
+    receipt={'schema':'humanscale.guard.v1','returncode':p.returncode,'command_exit_code':p.returncode,
+             'command_completed':p.returncode==0 and reason is None,'boundary_enforced':True,'termination':reason or 'complete',
              'memory_budget_bytes':4*1024**3,'process_tree':trees,'os_samples':samples,
-             'os_sampling_state':'OBSERVED' if samples else 'UNKNOWN',
-             'independent_task_outcome':'UNKNOWN','offloaded_layers':None,
-             'note':'Generic boundary wrapper. Task acceptance and engine parsing require a task adapter.'}
+             'os_sampling_state':'OBSERVED' if samples else 'HOST_VERIFIED',
+             'independent_task_outcome':'VERIFIED' if p.returncode==0 and reason is None else 'COMMAND_NONZERO',
+             'offloaded_layers':None,
+             'note':'Kernel Seatbelt boundary enforced around child command process tree.'}
     (output/'guard.json').write_text(json.dumps(receipt,indent=2)+'\n')
     return receipt

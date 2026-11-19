@@ -1,0 +1,10 @@
+{
+  "prompt_per_second": 673.4729526948389,
+  "avg_prompt_tps": 673.4729526948389,
+  "avg_gen_tps": 86.11621429418041,
+  "avg_ttft_ms": 477.49876976013184,
+  "predicted_per_second": 86.11621429418041,
+  "time_to_first_token_ms": 477.49876976013184,
+  "ttft_state": "OBSERVED",
+  "mapping": "llama.cpp server timings; LocalScore metric semantics, no leaderboard submission"
+}

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Picchio Workbench · Hermès, Loro Piana, Saint Laurent</title>
+<link rel="icon" href="data:,">
+<style>
+:root{color-scheme:light;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#18181b;background:#faf8f5}
+*{box-sizing:border-box}body{margin:0;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:24px}h1{font:600 28px Georgia,serif;margin:0}nav{display:flex;gap:6px}button,select,a{font-family:inherit;font-size:12px;color:inherit}button,select{background:white;border:1px solid #18181b;padding:7px 10px;border-radius:0;cursor:pointer}button[aria-pressed="true"]{background:#18181b;color:white}main{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}.panel{position:relative;min-width:0;border-top:1px solid #18181b}.heading{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 0}h2{font:600 20px Georgia,serif;margin:0}.swatches{display:flex;gap:4px;margin-bottom:12px}.swatches i{height:5px;flex:1;background:var(--color)}.still{display:block}.still img{display:block;width:100%;height:auto}.live{visibility:hidden;overflow:hidden;position:absolute;width:100%;background:white}.live iframe{border:0;width:1440px;height:928px;transform-origin:top left;display:block}body[data-mode="live"] .live{visibility:visible;position:relative}body[data-mode="live"] .still{display:none}.open{display:block;margin-top:10px;text-underline-offset:3px}a:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid #2b6cb0;outline-offset:3px}@media(max-width:760px){body{padding:12px}header{align-items:flex-start;flex-direction:column}main{gap:8px}.heading{align-items:flex-start;flex-direction:column}h2{font-size:16px}select{max-width:100%;font-size:10px}}
+</style>
+</head>
+<body data-mode="hd">
+<header><h1>Picchio Workbench</h1><nav aria-label="Preview mode"><button type="button" id="hd" aria-pressed="true">HD screenshots</button><button type="button" id="live" aria-pressed="false">Live comparison</button><a href="index.html">Open workbench</a></nav></header>
+<main></main>
+<script>
+'use strict';
+const palettes = [
+  {name:'Hermès',image:'overview_full.png',colors:['#1B365D','#2B6CB0','#B45309']},
+  {name:'Loro Piana',image:'overview_loro_piana.png',colors:['#0F5257','#4338CA','#A16207']},
+  {name:'Saint Laurent',image:'overview_saint_laurent.png',colors:['#18181B','#475569','#C2410C']}
+];
+const panels = palettes.map((palette,index) => {
+  const panel = document.createElement('section');
+  panel.className = 'panel';
+  panel.innerHTML = `<div class="heading"><h2>${palette.name}</h2><select aria-label="Palette for comparison ${index + 1}">${palettes.map((p,k)=>`<option value="${k}" ${k===index?'selected':''}>${p.name}</option>`).join('')}</select></div><div class="swatches" aria-hidden="true"></div><a class="still" target="_blank"><img width="2880" height="1856"></a><div class="live"><iframe title="${palette.name} live workbench" src="index.html?palette=${index}"></iframe></div><a class="open" target="_blank">Open full size</a>`;
+  document.querySelector('main').append(panel);
+  const select = panel.querySelector('select');
+  function update() {
+    const k = Number(select.value), p = palettes[k];
+    panel.querySelector('h2').textContent = p.name;
+    panel.querySelector('.swatches').innerHTML = p.colors.map(c=>`<i style="--color:${c}"></i>`).join('');
+    const image = panel.querySelector('img');
+    image.src = '../screenshots/' + p.image;
+    image.alt = p.name + ' full workbench at 1440 × 900, DPR 2';
+    panel.querySelector('.still').href = image.src;
+    panel.querySelector('.open').href = 'index.html?palette=' + k;
+    const frame = panel.querySelector('iframe');
+    frame.title = p.name + ' live workbench';
+    frame.contentWindow.postMessage({type:'workbenchPalette',palette:k},'*');
+  }
+  select.addEventListener('change',update);
+  panel.querySelector('iframe').addEventListener('load',update);
+  new ResizeObserver(() => {
+    const scale = panel.clientWidth / 1440;
+    panel.querySelector('iframe').style.transform = `scale(${scale})`;
+    panel.querySelector('.live').style.height = `${928 * scale}px`;
+  }).observe(panel);
+  update();
+  return panel;
+});
+for (const mode of ['hd','live']) document.getElementById(mode).onclick = () => {
+  document.body.dataset.mode = mode;
+  for (const id of ['hd','live']) document.getElementById(id).setAttribute('aria-pressed',String(id===mode));
+};
+</script>
+</body>
+</html>

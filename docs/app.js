@@ -368,7 +368,7 @@ function render() {
   $('status').textContent = `Loaded ${fmt(window.WORKBENCH_FIRST_RENDER_MS, 0)} ms · recomputed ${runs.length} receipts in ${fmt(ms)} ms`;
 }
 
-$('command').textContent = 'PYTHONPATH=workbench/runner python3 -m humanscale run --model /path/to/model.gguf --scenario all --output workbench/receipts/local_$(date +%s)';
+$('command').textContent = 'PYTHONPATH=workbench/runner python3 -m humanscale run --scenario all --output /tmp/picchio_verify';
 $('copy').onclick = async () => {
   try { await navigator.clipboard.writeText($('command').textContent); $('copy').textContent = 'Copied'; }
   catch (e) { const range = document.createRange(); range.selectNodeContents($('command')); getSelection().removeAllRanges(); getSelection().addRange(range); $('copy').textContent = 'Press ⌘C'; }

@@ -21,3 +21,9 @@ jobs:
         run: python picchio.py --selftest
       - name: test the single file
         run: python public/picchio.pyz --selftest
+      - name: test instant workbench verification
+        if: matrix.python == '3.13'
+        run: python -m unittest discover -s workbench/runner/tests -v
+      - name: replay captured workbench receipts
+        if: matrix.python == '3.13'
+        run: python workbench/receipts/replay_workbench_receipts.py

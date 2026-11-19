@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "humanscale-workbench"
+version = "0.1.0"
+description = "Run local repair agents with independent hardware, boundary and outcome receipts"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[project.scripts]
+humanscale = "humanscale.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["humanscale*"]
+
+[tool.setuptools.package-data]
+humanscale = ["provenance.json", "vendor/*LICENSE"]

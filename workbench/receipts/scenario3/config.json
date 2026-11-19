@@ -1,0 +1,15 @@
+{
+  "scenario": 3,
+  "model": "/Users/suapril/Code/mozilla-humanscale/workbench/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+  "workspace": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario3/workspace",
+  "engine": "/opt/homebrew/bin/llama-server",
+  "port": 51820,
+  "nonces": [
+    "FIRST_c8a7fed8c3",
+    "MIDDLE_224cb6d9f5",
+    "TAIL_eb5d149f9b"
+  ],
+  "probe": "/Users/suapril/Code/mozilla-humanscale/workbench/runner/humanscale/probe.py",
+  "sentinel": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario3/outside_sensitive_fixture.txt",
+  "protected": "/Users/suapril/Code/mozilla-humanscale/workbench/receipts/scenario3/protected/test_original.py"
+}

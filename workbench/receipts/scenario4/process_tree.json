@@ -1,0 +1,1045 @@
+[
+  {
+    "at": 1794933626.231838,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 22855680,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1327104,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      }
+    ]
+  },
+  {
+    "at": 1794933626.4047081,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23379968,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 24035328,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933626.583221,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23379968,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 24477696,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933626.754221,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23396352,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933626.926178,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23412736,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933627.116024,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23412736,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933627.298512,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23412736,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933627.4824479,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23412736,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933627.656944,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23429120,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933627.8414268,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23429120,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.0525272,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23429120,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.244162,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23347200,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.4231439,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23363584,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26968064,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.610754,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23347200,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26951680,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.788942,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933628.966966,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933629.144089,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933629.31744,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933629.4970272,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933629.6716008,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933629.861548,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.044312,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.2263622,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.407517,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.587748,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23298048,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.761436,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26886144,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933630.939917,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933631.1219158,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933631.300229,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933631.4801438,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933631.657909,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933631.834947,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.010834,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.1925151,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.369071,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.5521998,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.727297,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933632.908593,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.079158,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.252992,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.42714,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.6042979,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.783731,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 26902528,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933633.9680378,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23314432,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 50462720,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933634.1476321,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23347200,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 85180416,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933634.325301,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23347200,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1248280576,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933634.504864,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23347200,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1276411904,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933634.679293,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23707648,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1278754816,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933634.85535,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23707648,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1279098880,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.029582,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23707648,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1299824640,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.2060301,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23724032,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1299972096,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.377611,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23756800,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1299972096,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.553838,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23756800,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1300054016,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.7259421,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23756800,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1300054016,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933635.9057012,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23756800,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1300054016,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.082182,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23789568,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1310507008,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.260276,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23822336,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1310507008,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.433184,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23822336,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1310523392,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.604856,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23822336,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1310523392,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.784362,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23937024,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20318,
+        "ppid": 19999,
+        "rss_bytes": 1343488,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 1310539776,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  },
+  {
+    "at": 1794933636.9559412,
+    "processes": [
+      {
+        "pid": 19999,
+        "ppid": 18611,
+        "rss_bytes": 23937024,
+        "command": "/opt/homebrew/Cellar/python@3.13/3.13.14/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python"
+      },
+      {
+        "pid": 20001,
+        "ppid": 19999,
+        "rss_bytes": 137691136,
+        "command": "/opt/homebrew/Cellar/llama.cpp/9430/bin/llama-server"
+      }
+    ]
+  }
+]

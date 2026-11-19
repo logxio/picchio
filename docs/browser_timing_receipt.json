@@ -1,0 +1,17 @@
+{
+  "source": "S4 headless Chrome measured receipt before S5 changes",
+  "source_sha256": "cfd3639f4517b05f526be92d0386a5601eb3b33321aec348d70631bba52dca88",
+  "browser": "Google Chrome 157.0.8103.79",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "deviceScaleFactor": 2
+  },
+  "cold_load_ms": 51,
+  "recompute_ms": 23.7,
+  "prose_recompute_ms": 24,
+  "rounding": "Nearest whole millisecond",
+  "measurement_scope": "Four recorded receipts rendered and recomputed in the browser",
+  "screenshot": "workbench/screenshots/application_timing.png",
+  "screenshot_sha256": "671ae661f47a8537ee8d0c7d98b741d6ff177228ee2fa2f4ea6fd935369a7c87"
+}

@@ -1,0 +1,1 @@
+synthetic private fixture for the controlled boundary probe

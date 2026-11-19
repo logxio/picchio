@@ -43,9 +43,10 @@
     try { await video.play(); toggle.textContent = 'Pause'; }
     catch { toggle.textContent = 'Play'; }
   }
-  function open() {
+  function open(audible = false) {
     if (active) return;
     active = true; player.hidden = false; lastChapter = null;
+    video.muted = !audible;
     video.currentTime = 0; sync(0); tick(); play();
     if (location.hash !== '#tour') location.hash = 'tour';
     scrollTo(0, 0);
@@ -64,7 +65,7 @@
   video.addEventListener('ended', () => { sync(data.duration); toggle.textContent = 'Replay'; });
   video.addEventListener('error', () => { toggle.textContent = 'Retry'; document.getElementById('status').textContent = 'Video unavailable. Select a chapter to explore the receipts.'; });
   document.getElementById('tourClose').onclick = close;
-  document.getElementById('demo').onclick = open;
+  document.getElementById('demo').onclick = () => open(true);
   addEventListener('hashchange', () => location.hash === '#tour' ? open() : active && close());
   addEventListener('keydown', e => { if (e.key === 'Escape' && active) close(); });
   window.workbenchTourCapture = time => {

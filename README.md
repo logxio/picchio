@@ -95,6 +95,17 @@ FITS. The whole model fits in this machine's memory.
   5.3 GiB to download
 ```
 
+## Verify four local AI runs
+
+Clone this repository and run the workbench checks with Python 3.11 or newer:
+
+```sh
+PYTHONPATH=workbench/runner python3 -m humanscale run --scenario all --output /tmp/picchio_verify
+python3 workbench/receipts/replay_workbench_receipts.py
+```
+
+This verifies four captured Apple M5 receipts and runs fresh host boundary and frozen SQLite checks, including the fake green result at 13 and the repaired total of 42. The first command writes `/tmp/picchio_verify/receipt.json`. It uses the standard library and the included receipts. See the [runner guide](workbench/runner/README.md) for fresh model inference.
+
 ## What it gives you
 
 - the exact number of model layers on the GPU

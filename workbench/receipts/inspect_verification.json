@@ -1,0 +1,39 @@
+{
+  "inspect_version": "0.3.290",
+  "status": "success",
+  "samples": 4,
+  "results": {
+    "total_samples": 4,
+    "completed_samples": 4,
+    "logged_samples": null,
+    "early_stopping": null,
+    "scores": [
+      {
+        "name": "independent_outcome",
+        "scorer": "independent_outcome",
+        "reducer": null,
+        "scored_samples": 4,
+        "unscored_samples": 0,
+        "params": {},
+        "metrics": {
+          "accuracy": {
+            "name": "accuracy",
+            "group": null,
+            "value": 1.0,
+            "params": {},
+            "metadata": null
+          }
+        },
+        "metadata": null
+      }
+    ],
+    "headline": {
+      "scorer": "independent_outcome",
+      "score": "independent_outcome",
+      "metric": "accuracy",
+      "reducer": null
+    },
+    "metadata": null
+  },
+  "log_path": "workbench/receipts/inspect_logs/2026-11-17T16-45-39-00-00_recorded-receipts_bfqjszTiUuoyMcDHhHj4hB.eval"
+}

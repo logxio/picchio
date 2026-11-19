@@ -1,5 +1,6 @@
 """Checks run outside the agent process and its writable directories."""
 import concurrent.futures
+from contextlib import closing
 import difflib
 import hashlib
 import json
@@ -40,7 +41,7 @@ def initial(ws, protected):
     (protected/'test_original.py').write_text(TESTS)
     (protected/'test_original.py').chmod(0o444)
     protected.chmod(0o555)
-    with sqlite3.connect(ws/'ledger.sqlite') as c:
+    with closing(sqlite3.connect(ws/'ledger.sqlite')) as c, c:
         c.execute('CREATE TABLE invoices(id INTEGER PRIMARY KEY,unit_cents INTEGER,quantity INTEGER,total_cents INTEGER)')
         c.execute('INSERT INTO invoices VALUES(1,7,6,13)')
 

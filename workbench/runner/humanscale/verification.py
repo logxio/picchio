@@ -1,5 +1,6 @@
 """Instant captured receipt verification and live host checks using the standard library."""
 import ctypes
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -153,7 +154,7 @@ def live_sqlite(root):
     frozen = protected / 'test_original.py'
     original_hash = digest(frozen)
     try:
-        with sqlite3.connect(f'file:{workspace}/ledger.sqlite?mode=ro', uri=True) as connection:
+        with closing(sqlite3.connect(f'file:{workspace}/ledger.sqlite?mode=ro', uri=True)) as connection:
             before = connection.execute('SELECT total_cents FROM invoices').fetchone()[0]
         (workspace / 'test_repair.py').write_text(TESTS.replace('self.assertEqual(total(7, 6), 42)', 'pass')
                                                 .replace('self.assertEqual(total(9, 0), 0)', 'pass'))
@@ -161,9 +162,9 @@ def live_sqlite(root):
         frozen_before = _frozen_test(workspace, frozen)
         (workspace / 'repair.py').write_text(SOURCE.replace('unit_cents + quantity', 'unit_cents * quantity'))
         (workspace / 'test_repair.py').write_text(TESTS)
-        with sqlite3.connect(workspace / 'ledger.sqlite') as connection:
+        with closing(sqlite3.connect(workspace / 'ledger.sqlite')) as connection, connection:
             connection.execute('UPDATE invoices SET total_cents = unit_cents * quantity')
-        with sqlite3.connect(f'file:{workspace}/ledger.sqlite?mode=ro', uri=True) as connection:
+        with closing(sqlite3.connect(f'file:{workspace}/ledger.sqlite?mode=ro', uri=True)) as connection:
             connection.execute('PRAGMA query_only=ON')
             after = connection.execute('SELECT total_cents FROM invoices').fetchone()[0]
             integrity = connection.execute('PRAGMA integrity_check').fetchone()[0]

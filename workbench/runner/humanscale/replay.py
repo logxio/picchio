@@ -1,5 +1,6 @@
 """Replay the captured artifacts without running inference."""
 import hashlib
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -19,7 +20,7 @@ def verify(path):
         if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest()!=receipt['provenance'][key]:errors.append('recording_source:'+name)
     computed=recompute(receipt)
     if computed!=receipt['recomputed']:errors.append('decision_mismatch')
-    with sqlite3.connect(f'file:{path.parent}/workspace/ledger.sqlite?mode=ro',uri=True) as c:
+    with closing(sqlite3.connect(f'file:{path.parent}/workspace/ledger.sqlite?mode=ro',uri=True)) as c:
         rows=[list(x) for x in c.execute('SELECT id,unit_cents,quantity,total_cents FROM invoices ORDER BY id')]
     if rows!=receipt['checks']['sqlite']['rows']:errors.append('sqlite_mismatch')
     for file,key in [('workspace/repair.py','repair_sha256'),('workspace/test_repair.py','tests_sha256'),('protected/test_original.py','protected_sha256')]:
